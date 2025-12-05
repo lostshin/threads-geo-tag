@@ -553,8 +553,8 @@ async function autoClickAboutProfileAndGetRegion() {
 
     console.log('[Threads] 找到 "More" 按鈕:', moreButton);
 
-    // 隨機等待 2-5 秒後再點擊，避免被當成自動化程式
-    const randomDelay1 = Math.random() * 3000 + 2000; // 2000-5000ms
+    // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
+    const randomDelay1 = Math.random() * 2000 + 1000; 
     console.log(`[Threads] 等待 ${Math.round(randomDelay1)}ms 後點擊 "More" 按鈕`);
     await waitForMilliseconds(randomDelay1);
 
@@ -588,8 +588,8 @@ async function autoClickAboutProfileAndGetRegion() {
 
     console.log('[Threads] 找到 "About this profile" 按鈕:', aboutButton);
 
-    // 隨機等待 2-5 秒後再點擊，避免被當成自動化程式
-    const randomDelay2 = Math.random() * 3000 + 2000; // 2000-5000ms
+    // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
+    const randomDelay2 = Math.random() * 2000 + 1000; 
     console.log(`[Threads] 等待 ${Math.round(randomDelay2)}ms 後點擊 "About this profile" 按鈕`);
     await waitForMilliseconds(randomDelay2);
 
