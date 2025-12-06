@@ -272,7 +272,7 @@ function getAllUsersOnPage() {
         // 如果包含 Profile SVG，則跳過此鏈接
         if (profileSvg) {
           const svgLabel = profileSvg.getAttribute('aria-label');
-          console.log(`[Threads] 跳過包含 Profile SVG 的鏈接 (${svgLabel}): ${href}`);
+          //console.log(`[Threads] 跳過包含 Profile SVG 的鏈接 (${svgLabel}): ${href}`);
           return;
         }
 
@@ -281,7 +281,7 @@ function getAllUsersOnPage() {
         // 檢查是否包含 <span translate="no">
         const usernameSpan = link.querySelector(`span[translate="no"]`);
         if (!usernameSpan) {
-          console.log(`[Threads] 跳過不包含 translate="no" span 的鏈接: ${href}`);
+          //console.log(`[Threads] 跳過不包含 translate="no" span 的鏈接: ${href}`);
           return;
         }
         const account = `@${username}`;
@@ -878,7 +878,7 @@ function showRegionLabelsOnPage(regionData) {
         // 確保標籤顯示
         existingLabel.style.display = 'inline-flex';
 
-        console.log(`[Threads] 更新 ${account} 的標籤: ${newText}`);
+        //console.log(`[Threads] 更新 ${account} 的標籤: ${newText}`);
         return;
       }
 
@@ -944,13 +944,13 @@ function showRegionLabelsOnPage(regionData) {
       if (element.childNodes.length > 0) {
         element.appendChild(label);
         addedCount++;
-        console.log(`[Threads] 成功添加 ${account} 的標籤: ${labelText} 1`);
+        //console.log(`[Threads] 成功添加 ${account} 的標籤: ${labelText} 1`);
       }
       // 方法2: 插入到 element 的下一個兄弟節點之前
       else if (element.parentElement) {
         element.parentElement.insertBefore(label, element.nextSibling);
         addedCount++;
-        console.log(`[Threads] 成功添加 ${account} 的標籤: ${labelText} 2`);
+        //console.log(`[Threads] 成功添加 ${account} 的標籤: ${labelText} 2`);
       }
 
     } catch (error) {
@@ -1207,7 +1207,7 @@ function removeRegionLabelsOnPage() {
 
 // 節流機制：確保兩次呼叫之間至少相隔 3 秒
 let lastScrollUpdate = 0;
-const SCROLL_THROTTLE_DELAY = 3000; // 3 秒
+const SCROLL_THROTTLE_DELAY = 2000; // 3 秒
 
 // 滾動停止計時器
 let scrollStopTimer = null;
@@ -1343,7 +1343,7 @@ function handlePageScroll(skipThrottle = false) {
   const now = Date.now();
   
   // 檢查是否距離上次更新已經過了 2 秒（除非跳過節流）
-  if (!skipThrottle && now - lastScrollUpdate < SCROLL_THROTTLE_DELAY) {
+  if (!skipThrottle && ( ( now - lastScrollUpdate) < SCROLL_THROTTLE_DELAY ) ) {
     console.log('[Threads] 捲動事件被節流機制忽略（距離上次更新不足 2 秒）');
     return;
   }
@@ -1396,7 +1396,8 @@ function handlePageScroll(skipThrottle = false) {
 function initScrollListener() {
   console.log('[Threads] 初始化頁面捲動監聽器');
 
-    window.addEventListener('scroll', handlePageScroll, { passive: true });
+    // 使用包裝函數確保 skipThrottle 為 false，避免 scroll 事件的 Event 物件被誤認為 truthy 的 skipThrottle
+    window.addEventListener('scroll', () => handlePageScroll(false), { passive: true });
 
     console.log('[Threads] 捲動監聽器已啟動（節流間隔: 2 秒）');
   }
@@ -1423,7 +1424,7 @@ function initPageFeatures() {
   console.log('[Threads] 將在 5 秒後執行第一次 handlePageScroll');
   setTimeout(() => {
     console.log('[Threads] 執行第一次 handlePageScroll');
-    handlePageScroll();
+    handlePageScroll(true);
   }, 2000);
 }
 
