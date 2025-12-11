@@ -5,6 +5,7 @@ const keepTabFilterContainer = document.getElementById('keepTabFilterContainer')
 const keepTabFilterInput = document.getElementById('keepTabFilterInput');
 const autoQueryVisibleCheckbox = document.getElementById('autoQueryVisibleCheckbox');
 const maxConcurrentInput = document.getElementById('maxConcurrentInput');
+const llmProfileAnalysisCheckbox = document.getElementById('llmProfileAnalysisCheckbox');
 const manualDetectBtn = document.getElementById('manualDetectBtn');
 const contentOutput = document.getElementById('contentOutput');
 const statusBar = document.getElementById('statusBar');
@@ -14,6 +15,20 @@ const queryProgress = document.getElementById('queryProgress');
 const cacheCountElement = document.getElementById('cacheCount');
 const showCacheBtn = document.getElementById('showCacheBtn');
 const clearCacheBtn = document.getElementById('clearCacheBtn');
+const profileCacheCountElement = document.getElementById('profileCacheCount');
+const showProfileCacheBtn = document.getElementById('showProfileCacheBtn');
+const clearProfileCacheBtn = document.getElementById('clearProfileCacheBtn');
+const openaiApiKeyInput = document.getElementById('openaiApiKeyInput');
+const apiKeyStatus = document.getElementById('apiKeyStatus');
+const apiKeySetIndicator = document.getElementById('apiKeySetIndicator');
+const apiKeyInputContainer = document.getElementById('apiKeyInputContainer');
+const editApiKeyBtn = document.getElementById('editApiKeyBtn');
+const clearApiKeyBtn = document.getElementById('clearApiKeyBtn');
+const llmProviderSection = document.getElementById('llmProviderSection');
+const llmProviderSelect = document.getElementById('llmProviderSelect');
+const openaiConfigPanel = document.getElementById('openaiConfigPanel');
+const localLLMConfigPanel = document.getElementById('localLLMConfigPanel');
+const localLLMStatus = document.getElementById('localLLMStatus');
 
 // ==================== 全局變數說明 ====================
 /**
@@ -23,7 +38,8 @@ const clearCacheBtn = document.getElementById('clearCacheBtn');
  * [
  *   {
  *     account: "@username",  // 用戶帳號（帶 @ 符號）
- *     region: null           // 所在地區（null = 尚未查詢，字串 = 已查詢結果）
+ *     region: null,          // 所在地區（null = 尚未查詢，字串 = 已查詢結果）
+ *     profile: null          // 用戶側寫標籤（null = 尚未分析，字串 = 已分析結果）
  *   },
  *   ...
  * ]
@@ -153,6 +169,40 @@ function updateQueryProgress(current, total) {
   }
 }
 
+// 更新側寫快取統計顯示的輔助函數
+async function updateProfileCacheStats() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'getProfileCacheStats'
+    });
+
+    if (response && response.success && response.stats) {
+      const validCount = response.stats.validCount || 0;
+      const totalCount = response.stats.totalCount || 0;
+      const expiredCount = response.stats.expiredCount || 0;
+
+      profileCacheCountElement.textContent = validCount;
+
+      console.log(`[Sidepanel] 側寫快取統計更新:`, {
+        validCount: validCount,
+        totalCount: totalCount,
+        expiredCount: expiredCount,
+        expiryDays: response.stats.expiryDays
+      });
+
+      if (expiredCount > 0) {
+        console.warn(`[Sidepanel] 發現 ${expiredCount} 個已過期的側寫快取記錄`);
+      }
+    } else {
+      profileCacheCountElement.textContent = '0';
+      console.warn('[Sidepanel] 獲取側寫快取統計失敗，響應:', response);
+    }
+  } catch (error) {
+    console.error('[Sidepanel] 獲取側寫快取統計失敗:', error);
+    profileCacheCountElement.textContent = '0';
+  }
+}
+
 // ==================== 查詢函數 ====================
 
 /**
@@ -209,7 +259,7 @@ async function showRegionLabels()
   }
 
   try {
-    updateStatus('正在頁面上顯示地區標籤...', 'info');
+    updateStatus('正在頁面上顯示用戶資訊標籤...', 'info');
 
     // 獲取當前活動標籤頁
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -219,22 +269,60 @@ async function showRegionLabels()
       return;
     }
 
-    // 準備地區資料，格式: { "@username": "Taiwan", ... }
-    // 優先使用 user.region，若無則查詢快取
+    // 準備地區資料，格式: { "@username": { region: "Taiwan", profile: "標籤1,標籤2" }, ... }
+    // 優先使用 user.region/profile，若無則查詢快取
+    // 重要：只有在拿到完整資料（地點+側寫）後才加入 regionData，否則保持黃色待查詢狀態
     const regionData = {};
     for (const user of currentGetUserListArray) {
+      let region = null;
+      let profile = null;
+
+      // 處理 region
       if (user.region) {
-        regionData[user.account] = user.region;
+        region = user.region;
       } else {
         // 從快取中查詢（去掉 @ 符號）
         const username = user.account.replace(/^@/, '');
         const cachedRegion = await getCachedRegion(username);
         if (cachedRegion) {
-          regionData[user.account] = cachedRegion;
+          region = cachedRegion;
           user.region = cachedRegion; // 同步更新 user 物件
         }
       }
+
+      // 處理 profile
+      if (user.profile !== undefined && user.profile !== null) {
+        profile = user.profile;
+      } else {
+        // 從快取中查詢（去掉 @ 符號）
+        const username = user.account.replace(/^@/, '');
+        try {
+          const response = await chrome.runtime.sendMessage({
+            action: 'getCachedProfile',
+            username: username
+          });
+          if (response && response.success && response.profile) {
+            profile = response.profile;
+            user.profile = response.profile; // 同步更新 user 物件
+          }
+        } catch (error) {
+          console.log(`[Sidepanel] 讀取側寫快取失敗 ${username}:`, error);
+        }
+      }
+
+      // 只有在拿到完整資料（地點+側寫都有）後才加入 regionData
+      // 否則不傳遞該用戶資料，讓標籤保持黃色待查詢狀態
+      if (region !== null && profile !== null) {
+        regionData[user.account] = {
+          region: region,
+          profile: profile
+        };
+      }
     }
+
+    // 更新快取統計（因為可能從快取讀取了資料）
+    updateCacheStats();
+    updateProfileCacheStats();
 
     // 向 content script 發送顯示標籤請求
     const response = await chrome.tabs.sendMessage(tab.id, {
@@ -244,7 +332,7 @@ async function showRegionLabels()
 
     if (response && response.success) {
       //updateStatus(`成功顯示標籤 ${response.addedCount}/${response.totalCount}`, 'success');
-      contentOutput.value = `已在頁面上顯示地區標籤\n成功: ${response.addedCount}/${response.totalCount}\n\n提示：\n- 黃色標籤 = 待查詢\n- 綠色標籤 = 已查詢`;
+      contentOutput.value = `已在頁面上顯示用戶資訊標籤\n成功: ${response.addedCount}/${response.totalCount}\n\n提示：\n- 黃色標籤 = 待查詢\n- 綠色標籤 = 已查詢`;
     } else {
       updateStatus(`顯示標籤失敗: ${response?.error || '未知錯誤'}`, 'error');
     }
@@ -255,10 +343,10 @@ async function showRegionLabels()
 }
 
 /*
-// 隱藏地區標籤按鈕
+// 隱藏用戶資訊標籤按鈕
 hideLabelsBtn.addEventListener('click', async () => {
   try {
-    updateStatus('正在隱藏地區標籤...', 'info');
+    updateStatus('正在隱藏用戶資訊標籤...', 'info');
 
     // 獲取當前活動標籤頁
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -275,7 +363,7 @@ hideLabelsBtn.addEventListener('click', async () => {
 
     if (response && response.success) {
       updateStatus(`已隱藏 ${response.hiddenCount} 個標籤`, 'success');
-      contentOutput.value = `已隱藏頁面上的地區標籤\n隱藏數量: ${response.hiddenCount}`;
+      contentOutput.value = `已隱藏頁面上的用戶資訊標籤\n隱藏數量: ${response.hiddenCount}`;
     } else {
       updateStatus(`隱藏標籤失敗: ${response?.error || '未知錯誤'}`, 'error');
     }
@@ -315,35 +403,53 @@ async function updateLinkList()
         updateUserCount();
         updateStatus('未找到用戶', 'info');
       } else {
-        // 保留已經查詢過的用戶資料（內存中的數據）
+        // 保留已經查詢過的用戶資料（內存中的數據，包含 region 和 profile）
         const existingDataMap = new Map();
         currentGetUserListArray.forEach(user => {
-          existingDataMap.set(user.account, user.region);
+          existingDataMap.set(user.account, { region: user.region, profile: user.profile });
         });
 
-        // 從快取中讀取地區數據
+        // 從快取中讀取地區和側寫數據
         const cachePromises = users.map(async account => {
           // 先檢查內存中是否有數據
-          if (existingDataMap.has(account) && existingDataMap.get(account) !== null) {
-            return { account, region: existingDataMap.get(account) };
+          const existingData = existingDataMap.get(account);
+          if (existingData && (existingData.region !== null || existingData.profile !== null)) {
+            return { account, region: existingData.region, profile: existingData.profile };
           }
 
           // 內存中沒有，從快取中讀取
+          let region = null;
+          let profile = null;
+
           try {
-            const response = await chrome.runtime.sendMessage({
+            const regionResponse = await chrome.runtime.sendMessage({
               action: 'getCachedRegion',
               username: account
             });
 
-            if (response && response.success && response.region) {
-              console.log(`[Sidepanel] 從快取載入 ${account}: ${response.region}`);
-              return { account, region: response.region };
+            if (regionResponse && regionResponse.success && regionResponse.region) {
+              console.log(`[Sidepanel] 從快取載入地區 ${account}: ${regionResponse.region}`);
+              region = regionResponse.region;
             }
           } catch (error) {
-            console.error(`[Sidepanel] 讀取快取失敗 ${account}:`, error);
+            console.error(`[Sidepanel] 讀取地區快取失敗 ${account}:`, error);
           }
 
-          return { account, region: null };
+          try {
+            const profileResponse = await chrome.runtime.sendMessage({
+              action: 'getCachedProfile',
+              username: account
+            });
+
+            if (profileResponse && profileResponse.success && profileResponse.profile) {
+              console.log(`[Sidepanel] 從快取載入側寫 ${account}: ${profileResponse.profile}`);
+              profile = profileResponse.profile;
+            }
+          } catch (error) {
+            console.error(`[Sidepanel] 讀取側寫快取失敗 ${account}:`, error);
+          }
+
+          return { account, region, profile };
         });
 
         // 等待所有快取讀取完成
@@ -363,6 +469,7 @@ async function updateLinkList()
         updateUserCount();
         updateQueryProgress(0, 0); // 重置進度
         updateCacheStats(); // 更新快取統計
+        updateProfileCacheStats(); // 更新側寫快取統計
 
         if (newCount > 0) {
           //updateStatus(`找到 ${totalCount} 個用戶 (新增 ${newCount} 個)`, 'success');
@@ -434,13 +541,141 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
   }
 
+  // 處理獲取用戶側寫請求（從 content.js 查詢）
+  if (request.action === 'getUserProfile') {
+    const { account } = request;
+    console.log(`[Sidepanel] 收到獲取側寫請求: ${account}`);
+
+    // 在 currentGetUserListArray 中找到對應的用戶
+    const user = currentGetUserListArray.find(u => u.account === account);
+    
+    if (user && user.profile) {
+      console.log(`[Sidepanel] 找到用戶 ${account} 的側寫: ${user.profile}`);
+      sendResponse({ success: true, profile: user.profile });
+    } else {
+      console.log(`[Sidepanel] 用戶 ${account} 沒有側寫資料`);
+      sendResponse({ success: false, profile: null });
+    }
+    return true;
+  }
+
+  // 處理用戶側寫分析結果更新
+  if (request.action === 'updateUserProfile') {
+    const { account, profile } = request;
+    console.log(`[Sidepanel] 收到側寫分析結果更新: ${account} - ${profile}`);
+
+    // 在 currentGetUserListArray 中找到所有對應的用戶並更新 profile
+    let updatedCount = 0;
+    currentGetUserListArray.forEach((user, index) => {
+      if (user.account === account) {
+        currentGetUserListArray[index].profile = profile;
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount > 0) {
+      console.log(`[Sidepanel] 已更新 ${updatedCount} 個 ${account} 的側寫為: ${profile}`);
+      sendResponse({ success: true, updated: true, count: updatedCount });
+    } else {
+      console.log(`[Sidepanel] 找不到用戶 ${account}，無法更新側寫`);
+      sendResponse({ success: false, error: '找不到用戶' });
+    }
+  }
+
+  // 處理側寫分析（從 background.js 的整合查詢觸發）
+  if (request.action === 'processProfileAnalysis') {
+    const { account, profileData } = request;
+    
+    console.log(`[Sidepanel] 收到側寫分析請求: ${account}`);
+
+    // 異步執行 LLM 分析（不阻塞地點查詢）
+    (async () => {
+      try {
+        const cleanUsername = account.startsWith('@') ? account.slice(1) : account;
+
+        // 如果是快取結果，直接使用
+        if (profileData.fromCache && profileData.profile) {
+          console.log(`[Sidepanel] 使用側寫快取 ${account}: ${profileData.profile}`);
+          
+          // 更新 currentGetUserListArray
+          currentGetUserListArray.forEach((user, index) => {
+            if (user.account === account) {
+              currentGetUserListArray[index].profile = profileData.profile;
+            }
+          });
+
+          // 刷新標籤顯示
+          await showRegionLabels();
+          updateStatus(`側寫分析完成: ${account}`, 'success');
+          return;
+        }
+
+        // 需要進行 LLM 分析
+        if (profileData.needAnalysis) {
+          console.log(`[Sidepanel] 開始 LLM 分析 ${account}`);
+          updateStatus(`正在分析 ${account} 的用戶側寫...`, 'info');
+          
+          if (typeof window.analyzeUserProfile !== 'function') {
+            console.error('[Sidepanel] analyzeUserProfile 函數未載入');
+            updateStatus('側寫分析失敗: LLM 函數未載入', 'error');
+            return;
+          }
+
+          const analysisResult = await window.analyzeUserProfile(
+            profileData.userPostContent,
+            profileData.userReplyContent,
+            (progress) => {
+              updateStatus(`LLM 模型下載中: ${progress}%`, 'info');
+            }
+          );
+
+          if (analysisResult && analysisResult.success) {
+            const profile = analysisResult.tags;
+            console.log(`[Sidepanel] LLM 分析成功 ${account}: ${profile}`);
+
+            // 保存到快取
+            await chrome.runtime.sendMessage({
+              action: 'saveCachedProfile',
+              username: cleanUsername,
+              profile: profile
+            });
+
+            // 更新側寫快取統計顯示
+            await updateProfileCacheStats();
+
+            // 更新 currentGetUserListArray
+            currentGetUserListArray.forEach((user, index) => {
+              if (user.account === account) {
+                currentGetUserListArray[index].profile = profile;
+              }
+            });
+
+            // 刷新標籤顯示
+            await showRegionLabels();
+            updateStatus(`側寫分析完成: ${account}`, 'success');
+          } else {
+            console.log(`[Sidepanel] LLM 分析失敗: ${analysisResult?.error}`);
+            updateStatus(`側寫分析失敗: ${analysisResult?.error || '未知錯誤'}`, 'error');
+          }
+        }
+      } catch (error) {
+        console.error('[Sidepanel] 側寫分析錯誤:', error);
+        updateStatus(`側寫分析錯誤: ${error.message}`, 'error');
+      }
+    })();
+
+    // 立即回應，不等待 LLM 分析完成
+    sendResponse({ success: true, processing: true });
+    return false;
+  }
+
   return true;
 });
 
 // ==================== Checkbox 狀態管理 ====================
 
 // 初始化：從 chrome.storage 讀取 checkbox 狀態
-chrome.storage.local.get(['keepTabAfterQuery', 'keepTabFilter', 'autoQueryVisible', 'maxConcurrentQueries'], (result) => {
+chrome.storage.local.get(['keepTabAfterQuery', 'keepTabFilter', 'autoQueryVisible', 'maxConcurrentQueries', 'llmProfileAnalysis'], (result) => {
   if (result.keepTabAfterQuery !== undefined) {
     keepTabCheckbox.checked = result.keepTabAfterQuery;
     // 根據 checkbox 狀態顯示/隱藏過濾條件輸入框
@@ -465,7 +700,12 @@ chrome.storage.local.get(['keepTabAfterQuery', 'keepTabFilter', 'autoQueryVisibl
     maxConcurrentInput.value = result.maxConcurrentQueries;
     console.log('[Sidepanel] 載入最大並行查詢數設定:', result.maxConcurrentQueries);
   }
+  if (result.llmProfileAnalysis !== undefined) {
+    llmProfileAnalysisCheckbox.checked = result.llmProfileAnalysis;
+    console.log('[Sidepanel] 載入用戶側寫分析設定:', result.llmProfileAnalysis);
+  }
 });
+
 
 // 監聽 keepTabCheckbox 變化，保存到 chrome.storage
 keepTabCheckbox.addEventListener('change', () => {
@@ -517,6 +757,186 @@ maxConcurrentInput.addEventListener('change', async () => {
   } catch (error) {
     console.error('[Sidepanel] 通知 background 失敗:', error);
   }
+});
+
+// 更新 LLM Provider UI 顯示狀態
+function updateLLMProviderUI() {
+  const isChecked = llmProfileAnalysisCheckbox.checked;
+  
+  if (!isChecked) {
+    // 未啟用分析功能：隱藏整個 provider 選擇區域
+    llmProviderSection.style.display = 'none';
+    return;
+  }
+  
+  // 啟用分析功能：顯示 provider 選擇區域
+  llmProviderSection.style.display = 'block';
+  
+  // 根據選擇的 provider 顯示對應的配置面板
+  const useLocalLLM = llmProviderSelect.value === 'local';
+  
+  if (useLocalLLM) {
+    openaiConfigPanel.style.display = 'none';
+    localLLMConfigPanel.style.display = 'block';
+    // 檢查本地 LLM 可用性
+    checkLocalLLMAvailability();
+  } else {
+    openaiConfigPanel.style.display = 'block';
+    localLLMConfigPanel.style.display = 'none';
+  }
+}
+
+// 檢查本地 LLM 可用性
+async function checkLocalLLMAvailability() {
+  localLLMStatus.className = 'local-llm-status checking';
+  localLLMStatus.textContent = '檢查中...';
+  
+  try {
+    if (typeof window.checkLLMAvailability !== 'function') {
+      throw new Error('LLM 檢查函數未載入');
+    }
+    
+    const result = await window.checkLLMAvailability();
+    
+    if (result.available) {
+      localLLMStatus.className = 'local-llm-status available';
+      if (result.status === 'downloading') {
+        localLLMStatus.textContent = '✓ 可用（模型下載中）';
+      } else if (result.status === 'downloadable') {
+        localLLMStatus.textContent = '✓ 可用（首次使用需下載模型）';
+      } else {
+        localLLMStatus.textContent = '✓ 可用';
+      }
+    } else {
+      localLLMStatus.className = 'local-llm-status unavailable';
+      let errorMsg = '✗ 不可用';
+      if (result.error) {
+        if (result.error.includes('Chrome 127')) {
+          errorMsg = '✗ 需要 Chrome 127 以上版本';
+        } else if (result.error.includes('hardware')) {
+          errorMsg = '✗ 硬體不支援，需要較新的 GPU';
+        } else {
+          errorMsg = `✗ ${result.error}`;
+        }
+      }
+      localLLMStatus.textContent = errorMsg;
+    }
+  } catch (error) {
+    localLLMStatus.className = 'local-llm-status unavailable';
+    localLLMStatus.textContent = `✗ 檢查失敗: ${error.message}`;
+  }
+}
+
+// 監聽 llmProfileAnalysisCheckbox 變化，保存到 chrome.storage
+llmProfileAnalysisCheckbox.addEventListener('change', () => {
+  const isChecked = llmProfileAnalysisCheckbox.checked;
+  chrome.storage.local.set({ llmProfileAnalysis: isChecked }, () => {
+    console.log('[Sidepanel] 保存用戶側寫分析設定:', isChecked);
+  });
+  updateLLMProviderUI();
+});
+
+// 監聽 LLM Provider 選擇變化
+llmProviderSelect.addEventListener('change', () => {
+  const useLocalLLM = llmProviderSelect.value === 'local';
+  chrome.storage.local.set({ useLocalLLM: useLocalLLM }, () => {
+    console.log('[Sidepanel] 切換到', useLocalLLM ? '本地 LLM' : 'OpenAI API');
+  });
+  updateLLMProviderUI();
+});
+
+// 更新 API Key 顯示狀態（已設定時隱藏輸入框，顯示 edit 按鈕）
+function updateApiKeyDisplayState(hasApiKey) {
+  if (hasApiKey) {
+    apiKeySetIndicator.style.display = 'inline';
+    apiKeyInputContainer.style.display = 'none';
+  } else {
+    apiKeySetIndicator.style.display = 'none';
+    apiKeyInputContainer.style.display = 'inline';
+  }
+}
+
+// 監聽 edit API key 按鈕點擊
+editApiKeyBtn.addEventListener('click', () => {
+  apiKeySetIndicator.style.display = 'none';
+  apiKeyInputContainer.style.display = 'inline';
+  openaiApiKeyInput.focus();
+});
+
+// 監聽 clear API key 按鈕點擊
+clearApiKeyBtn.addEventListener('click', () => {
+  openaiApiKeyInput.value = '';
+  chrome.storage.local.remove('openaiApiKey', () => {
+    console.log('[Sidepanel] 已清除 OpenAI API Key');
+    apiKeyStatus.textContent = '已清除';
+    apiKeyStatus.className = 'api-key-status';
+    setTimeout(() => {
+      apiKeyStatus.textContent = '';
+    }, 2000);
+  });
+  updateApiKeyDisplayState(false);
+});
+
+// 初始化：從 chrome.storage 讀取 OpenAI API Key 和 LLM Provider 設定
+chrome.storage.local.get(['openaiApiKey', 'useLocalLLM'], (result) => {
+  if (result.openaiApiKey) {
+    openaiApiKeyInput.value = result.openaiApiKey;
+    console.log('[Sidepanel] 載入 OpenAI API Key');
+    updateApiKeyDisplayState(true);
+  } else {
+    updateApiKeyDisplayState(false);
+  }
+  
+  // 設定 LLM Provider 選擇
+  if (result.useLocalLLM === true) {
+    llmProviderSelect.value = 'local';
+    console.log('[Sidepanel] 載入 LLM Provider 設定: 本地 LLM');
+  } else {
+    llmProviderSelect.value = 'openai';
+    console.log('[Sidepanel] 載入 LLM Provider 設定: OpenAI API');
+  }
+  
+  // 初始化後更新顯示狀態
+  updateLLMProviderUI();
+});
+
+// 當 API Key 輸入框內容變化時，自動儲存
+let apiKeySaveTimeout = null;
+openaiApiKeyInput.addEventListener('input', () => {
+  const apiKey = openaiApiKeyInput.value.trim();
+  
+  // 清除之前的延遲儲存
+  if (apiKeySaveTimeout) {
+    clearTimeout(apiKeySaveTimeout);
+  }
+  
+  // 延遲 500ms 後自動儲存
+  apiKeySaveTimeout = setTimeout(() => {
+    if (!apiKey) {
+      apiKeyStatus.textContent = '';
+      apiKeyStatus.className = 'api-key-status';
+      return;
+    }
+    
+    // 簡單驗證 API Key 格式
+    if (!apiKey.startsWith('sk-')) {
+      apiKeyStatus.textContent = '格式不正確';
+      apiKeyStatus.className = 'api-key-status error';
+      return;
+    }
+    
+    chrome.storage.local.set({ openaiApiKey: apiKey }, () => {
+      console.log('[Sidepanel] 自動儲存 OpenAI API Key');
+      apiKeyStatus.textContent = '✓ 已儲存';
+      apiKeyStatus.className = 'api-key-status saved';
+      
+      // 2 秒後清除狀態訊息並切換到已設定狀態
+      setTimeout(() => {
+        apiKeyStatus.textContent = '';
+        updateApiKeyDisplayState(true);
+      }, 2000);
+    });
+  }, 500);
 });
 
 // ==================== 顯示/清除快取按鈕 ====================
@@ -633,6 +1053,115 @@ clearCacheBtn.addEventListener('click', async () => {
   }
 });
 
+// ==================== 顯示/清除側寫快取按鈕 ====================
+
+// 監聽顯示側寫快取按鈕點擊
+showProfileCacheBtn.addEventListener('click', async () => {
+  try {
+    console.log('[Sidepanel] 顯示側寫快取按鈕被點擊');
+    updateStatus('正在讀取側寫資料...', 'info');
+
+    // 禁用按鈕防止重複點擊
+    showProfileCacheBtn.disabled = true;
+    showProfileCacheBtn.textContent = '讀取中...';
+
+    // 發送獲取側寫快取請求
+    const response = await chrome.runtime.sendMessage({
+      action: 'getAllCachedProfiles'
+    });
+
+    if (response && response.success) {
+      const cache = response.cache || {};
+      const entries = Object.entries(cache);
+      
+      if (entries.length === 0) {
+        contentOutput.value = '本機沒有儲存任何用戶側寫資料';
+        updateStatus('側寫資料為空', 'info');
+      } else {
+        // 格式化輸出
+        const output = entries.map(([account, data]) => {
+          const profile = data.profile || '未知';
+          return `${account}: ${profile}`;
+        }).join('\n');
+        
+        contentOutput.value = `本機儲存的用戶側寫資料 (共 ${entries.length} 筆):\n\n${output}`;
+        updateStatus(`已載入 ${entries.length} 筆側寫資料`, 'success');
+      }
+    } else {
+      contentOutput.value = `讀取失敗: ${response?.error || '未知錯誤'}`;
+      updateStatus(`讀取失敗: ${response?.error || '未知錯誤'}`, 'error');
+    }
+
+    // 恢復按鈕狀態
+    showProfileCacheBtn.disabled = false;
+    showProfileCacheBtn.textContent = '顯示';
+
+  } catch (error) {
+    console.error('[Sidepanel] 讀取側寫快取錯誤:', error);
+    updateStatus(`讀取側寫快取錯誤: ${error.message}`, 'error');
+    contentOutput.value = `讀取錯誤: ${error.message}`;
+
+    // 恢復按鈕狀態
+    showProfileCacheBtn.disabled = false;
+    showProfileCacheBtn.textContent = '顯示';
+  }
+});
+
+// 監聽清除側寫快取按鈕點擊
+clearProfileCacheBtn.addEventListener('click', async () => {
+  try {
+    // 顯示確認對話框
+    const confirmed = confirm('確定要清除所有本機保存的用戶側寫資料嗎？\n\n此操作無法復原。');
+
+    if (!confirmed) {
+      console.log('[Sidepanel] 用戶取消清除側寫快取');
+      return;
+    }
+
+    console.log('[Sidepanel] 清除側寫快取按鈕被點擊');
+    updateStatus('正在清除側寫資料...', 'info');
+
+    // 禁用按鈕防止重複點擊
+    clearProfileCacheBtn.disabled = true;
+    clearProfileCacheBtn.textContent = '清除中...';
+
+    // 發送清除側寫快取請求
+    const response = await chrome.runtime.sendMessage({
+      action: 'clearProfileCache'
+    });
+
+    if (response && response.success) {
+      updateStatus('側寫資料已清除', 'success');
+
+      // 更新側寫快取統計顯示
+      await updateProfileCacheStats();
+
+      // 清除當前用戶列表中的 profile 資料（保留其他資料）
+      currentGetUserListArray = currentGetUserListArray.map(user => ({
+        account: user.account,
+        region: user.region,
+        profile: null
+      }));
+
+      console.log('[Sidepanel] 側寫快取已清除，用戶列表已重置');
+    } else {
+      updateStatus(`清除失敗: ${response?.error || '未知錯誤'}`, 'error');
+    }
+
+    // 恢復按鈕狀態
+    clearProfileCacheBtn.disabled = false;
+    clearProfileCacheBtn.textContent = '清除';
+
+  } catch (error) {
+    console.error('[Sidepanel] 清除側寫快取錯誤:', error);
+    updateStatus(`清除側寫快取錯誤: ${error.message}`, 'error');
+
+    // 恢復按鈕狀態
+    clearProfileCacheBtn.disabled = false;
+    clearProfileCacheBtn.textContent = '清除';
+  }
+});
+
 // ==================== 手動偵測按鈕 ====================
 
 // 監聽手動偵測按鈕點擊，觸發 content.js 的 handlePageScroll
@@ -734,6 +1263,7 @@ console.log('[Sidepanel] 已建立與 background 的持久連接');
 
     // 初始化快取統計顯示
     await updateCacheStats();
+    await updateProfileCacheStats();
 
     // 自動執行手動偵測按鈕的動作
     // 延遲一小段時間確保 DOM 完全載入
@@ -754,6 +1284,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     console.log('[Sidepanel] 頁面重新可見，刷新快取統計');
     updateCacheStats();
+    updateProfileCacheStats();
   }
 });
 
@@ -761,6 +1292,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => {
   console.log('[Sidepanel] Window 獲得焦點，刷新快取統計');
   updateCacheStats();
+  updateProfileCacheStats();
 });
 
 // ==================== 手動刷新快取統計 ====================
@@ -778,6 +1310,22 @@ cacheCountElement.addEventListener('click', async () => {
   // 如果刷新後數字沒變，顯示一個提示
   if (cacheCountElement.textContent === originalText) {
     console.log('[Sidepanel] 快取統計已是最新');
+  }
+});
+
+// 點擊側寫快取統計數字可手動刷新
+profileCacheCountElement.addEventListener('click', async () => {
+  console.log('[Sidepanel] 用戶點擊側寫快取統計，手動刷新');
+
+  // 顯示刷新動畫
+  const originalText = profileCacheCountElement.textContent;
+  profileCacheCountElement.textContent = '...';
+
+  await updateProfileCacheStats();
+
+  // 如果刷新後數字沒變，顯示一個提示
+  if (profileCacheCountElement.textContent === originalText) {
+    console.log('[Sidepanel] 側寫快取統計已是最新');
   }
 });
 

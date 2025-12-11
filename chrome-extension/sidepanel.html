@@ -8,13 +8,12 @@
 </head>
 <body>
   <div class="container">
-    <h1>小黃標-Threads 用戶所在地自動標籤 v0.9.4</h1>
+    <h1>小黃標-Threads 用戶資訊標籤 v0.9.4</h1>
 
     <div class="welcome-section">
-      <h2>歡迎使用</h2>
       <ol class="instructions">
-      	<li>開啟此工具面板後，會自動在每位用戶名稱旁加入<span class="location-tag">所在地標籤</span>。點擊[查詢]即可在新分頁中自動查詢該用戶的位置。</li>
-	<li>若不需要此功能，只要關閉側邊欄，即可同時移除頁面上所有所在地標籤。</li>      </ol>
+      	<li>開啟此工具面板後，會自動在每位用戶名稱旁加入<span class="location-tag">用戶資訊標籤</span>。點擊[查詢]會自動開啟新分頁做分析。</li>
+	<li>若不需要此功能，只要關閉側邊欄，即可同時移除頁面上所有標籤。</li>      </ol>
     </div>
 
     <div id="statusBar" class="status-bar">就緒</div>
@@ -47,17 +46,59 @@
             <input type="number" id="maxConcurrentInput" min="1" max="10" value="3" style="width: 60px;">
           </div>
         </div>
+
+        <div class="control-group">
+          <label class="checkbox-container">
+            <input type="checkbox" id="llmProfileAnalysisCheckbox">
+            <span class="checkbox-label">社群行為分析</span>
+          </label>
+          <p class="option-description">根據用戶近期的貼文與回覆內容，AI自動產生使用者標籤。</p>
+          <div class="llm-provider-section" id="llmProviderSection" style="display: none;">
+            <div class="llm-provider-options">
+              <label for="llmProviderSelect">選擇模型：</label>
+              <select id="llmProviderSelect" name="llmProvider">
+                <option value="openai">gpt-5-mini (遠端API)</option>
+                <option value="local">gemini-3-nano (本機)</option>
+              </select>
+            </div>
+            <div class="llm-config-panel" id="openaiConfigPanel">
+              <div class="config-row">
+                <label for="openaiApiKeyInput">API Key：</label>
+                <span id="apiKeySetIndicator" style="display: none;">
+                  <span class="api-key-set-text">已設定</span>
+                  <button type="button" id="editApiKeyBtn" class="small-text-btn">[edit]</button>
+                </span>
+                <span id="apiKeyInputContainer">
+                  <input type="password" id="openaiApiKeyInput" placeholder="sk-..." style="width: 160px;">
+                  <button type="button" id="clearApiKeyBtn" class="small-text-btn">[clear]</button>
+                </span>
+                <span id="apiKeyStatus" class="api-key-status"></span>
+              </div>
+            </div>
+            <div class="llm-config-panel" id="localLLMConfigPanel" style="display: none;">
+              <div id="localLLMStatus" class="local-llm-status checking">檢查中...</div>
+            </div>
+          </div>
+        </div>
         
+        <!--
         <div class="user-count-display">
           <span id="userCountLabel">已顯示標籤: <strong id="userCount">0</strong></span>
           <button id="manualDetectBtn" class="manual-detect-btn" title="手動加入標籤">手動加入標籤</button>
           <span id="progressLabel" style="display: none;"> | 查詢進度: <strong id="queryProgress">0/0</strong></span>
         </div>
+         -->
 
         <div class="cache-stats-display">
-          <span id="cacheStatsLabel">本機儲存用戶所在地數量: <strong id="cacheCount" class="cache-count-clickable" title="點擊刷新統計">0</strong></span>
+          <span id="cacheStatsLabel">已儲存用戶所在地: <strong id="cacheCount" class="cache-count-clickable" title="點擊刷新統計">0</strong></span>
           <button id="showCacheBtn" class="show-cache-btn" title="顯示所有本機保存的用戶所在地資料">顯示</button>
           <button id="clearCacheBtn" class="clear-cache-btn" title="清除所有本機保存的用戶所在地資料">清除</button>
+        </div>
+
+        <div class="cache-stats-display">
+          <span id="profileCacheStatsLabel">已儲存用戶側寫: <strong id="profileCacheCount" class="cache-count-clickable" title="點擊刷新統計">0</strong></span>
+          <button id="showProfileCacheBtn" class="show-cache-btn" title="顯示所有本機保存的用戶側寫資料">顯示</button>
+          <button id="clearProfileCacheBtn" class="clear-cache-btn" title="清除所有本機保存的用戶側寫資料">清除</button>
         </div>
 
         <div class="content-group">

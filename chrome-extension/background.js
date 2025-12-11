@@ -5,8 +5,16 @@ import {
   getCachedRegion,
   getAllCachedRegions,
   clearCache,
+  removeUserCache,
   getCacheStats,
-  updateMaxConcurrent
+  updateMaxConcurrent,
+  addToIntegratedQueryQueue,
+  getCachedProfile,
+  saveCachedProfile,
+  getAllCachedProfiles,
+  clearProfileCache,
+  getProfileCacheStats,
+  removeUserProfileCache
 } from './queryManager.js';
 
 // 當擴展安裝時設置 Side Panel
@@ -81,7 +89,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: true });
   }
 
-  // 處理手動查詢地區（從標籤上的 [C] 按鈕觸發）
+  // 處理手動查詢地區（從標籤上的 [查詢] 按鈕觸發）
   if (request.action === 'manualQueryRegion') {
     const { account } = request;
 
@@ -89,10 +97,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         console.log(`[Background] 開始手動查詢: ${account}`);
 
-        // 使用查詢管理器執行查詢（會自動讀取 storage 設定）
-        const result = await queryUserRegion(account);
+        // 讀取設定
+        const storageResult = await chrome.storage.local.get([
+          'keepTabAfterQuery', 
+          'keepTabFilter', 
+          'llmProfileAnalysis'
+        ]);
+        const shouldKeepTab = storageResult.keepTabAfterQuery || false;
+        const keepTabFilter = storageResult.keepTabFilter || '';
+        const enableProfileAnalysis = storageResult.llmProfileAnalysis || false;
 
-        // 返回結果
+        console.log(`[Background] 查詢設定: keepTab=${shouldKeepTab}, filter="${keepTabFilter}", profile=${enableProfileAnalysis}`);
+
+        // 使用隊列機制執行整合查詢
+        const queueResult = addToIntegratedQueryQueue(
+          account,
+          enableProfileAnalysis,
+          shouldKeepTab,
+          keepTabFilter,
+          // 當側寫內容準備好時的回調
+          (profileData) => {
+            console.log(`[Background] 側寫內容準備好，通知 sidepanel 進行 LLM 分析`);
+            // 通知 sidepanel 進行 LLM 分析
+            chrome.runtime.sendMessage({
+              action: 'processProfileAnalysis',
+              account: account,
+              profileData: profileData
+            }).catch(err => {
+              console.log('[Background] 通知 sidepanel 進行 LLM 分析失敗:', err.message);
+            });
+          }
+        );
+
+        // 如果無法加入隊列（隊列已滿或已存在），返回失敗
+        if (queueResult === null) {
+          sendResponse({
+            success: false,
+            error: '隊列已滿或該用戶已在查詢中'
+          });
+          return;
+        }
+
+        // 等待查詢完成並返回結果
+        const result = await queueResult;
         sendResponse(result);
       } catch (error) {
         console.error('[Background] 手動查詢錯誤:', error);
@@ -163,6 +210,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true });
       } catch (error) {
         console.error('[Background] 清除緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 移除單一用戶的緩存（地區和側寫）
+  if (request.action === 'removeUserCache') {
+    const { account } = request;
+    (async () => {
+      try {
+        const removedRegion = await removeUserCache(account);
+        const removedProfile = await removeUserProfileCache(account);
+        console.log(`[Background] 移除用戶緩存: @${account}, 地區: ${removedRegion}, 側寫: ${removedProfile}`);
+        sendResponse({ success: true, removedRegion, removedProfile });
+      } catch (error) {
+        console.error('[Background] 移除用戶緩存失敗:', error);
         sendResponse({ success: false, error: error.message });
       }
     })();
@@ -252,6 +317,92 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true, cache });
       } catch (error) {
         console.error('[Background] 獲取所有緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 獲取緩存中的用戶側寫
+  if (request.action === 'getCachedProfile') {
+    const { username } = request;
+
+    (async () => {
+      try {
+        const cachedData = await getCachedProfile(username);
+        if (cachedData) {
+          sendResponse({ 
+            success: true, 
+            profile: cachedData.profile
+          });
+        } else {
+          sendResponse({ success: true, profile: null });
+        }
+      } catch (error) {
+        console.error('[Background] 獲取側寫緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 保存用戶側寫到緩存
+  if (request.action === 'saveCachedProfile') {
+    const { username, profile } = request;
+
+    (async () => {
+      try {
+        await saveCachedProfile(username, profile);
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('[Background] 保存側寫緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 獲取所有緩存的用戶側寫資料
+  if (request.action === 'getAllCachedProfiles') {
+    (async () => {
+      try {
+        const cache = await getAllCachedProfiles();
+        sendResponse({ success: true, cache });
+      } catch (error) {
+        console.error('[Background] 獲取所有側寫緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 清除所有側寫緩存
+  if (request.action === 'clearProfileCache') {
+    (async () => {
+      try {
+        await clearProfileCache();
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('[Background] 清除側寫緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 獲取側寫緩存統計信息
+  if (request.action === 'getProfileCacheStats') {
+    (async () => {
+      try {
+        const stats = await getProfileCacheStats();
+        sendResponse({ success: true, stats });
+      } catch (error) {
+        console.error('[Background] 獲取側寫緩存統計失敗:', error);
         sendResponse({ success: false, error: error.message });
       }
     })();

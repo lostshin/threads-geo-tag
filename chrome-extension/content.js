@@ -15,7 +15,7 @@
  *
  * 【作用】
  * 1. 保存頁面上所有用戶連結的 DOM 元素引用
- * 2. 用於在頁面上插入/更新地區標籤（標籤會插入到這些元素附近）
+ * 2. 用於在頁面上插入/更新用戶資訊標籤（標籤會插入到這些元素附近）
  * 3. 用於檢查哪些用戶在可見視窗範圍內（visibility detection）
  *
  * 【更新時機】
@@ -116,7 +116,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
-  // 處理顯示地區標籤
+  // 處理顯示用戶資訊標籤
   if (request.action === 'showRegionLabels') {
     try {
       const regionData = request.regionData || {}; // { "@username": "Taiwan", ... }
@@ -137,7 +137,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
-  // 處理隱藏地區標籤
+  // 處理隱藏用戶資訊標籤
   if (request.action === 'hideRegionLabels') {
     try {
       const result = hideRegionLabelsOnPage();
@@ -155,7 +155,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
-  // 處理移除地區標籤（完全刪除）
+  // 處理移除用戶資訊標籤（完全刪除）
   if (request.action === 'removeRegionLabels') {
     try {
       console.log('[Threads] 收到移除標籤請求');
@@ -224,6 +224,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: true });
     } catch (error) {
       console.log('[Threads] 處理 sidepanel 開啟事件時發生錯誤:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return false;
+  }
+
+  // 處理提取頁面文字請求（用於用戶側寫分析）
+  if (request.action === 'extractPageText') {
+    try {
+      console.log('[Threads] 收到提取頁面文字請求');
+      const pageText = extractTextFromDocument();
+      sendResponse({ success: true, text: pageText });
+    } catch (error) {
+      console.log('[Threads] 提取頁面文字時發生錯誤:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+    return false;
+  }
+
+  // 處理頁面捲動請求（用於側寫分析時載入更多內容）
+  if (request.action === 'performScroll') {
+    try {
+      // 計算每頁的捲動距離（使用視窗高度）
+      const pageHeight = window.innerHeight;
+      // 加入上下 25% 的隨機距離 (0.75 ~ 1.25)
+      const randomFactor = 0.75 + Math.random() * 0.5;
+      const totalScrollDistance = pageHeight * randomFactor;
+
+      // 向下捲動指定的距離
+      window.scrollBy({
+        top: totalScrollDistance,
+        behavior: 'smooth'
+      });
+
+      console.log(`[Threads] 執行頁面捲動，距離: ${Math.round(totalScrollDistance)}px`);
+      sendResponse({ success: true, scrollDistance: totalScrollDistance });
+    } catch (error) {
+      console.log('[Threads] 執行頁面捲動時發生錯誤:', error);
       sendResponse({ success: false, error: error.message });
     }
     return false;
@@ -532,8 +569,8 @@ async function autoClickAboutProfileAndGetRegion() {
 
     console.log('[Threads] 找到 "More" 按鈕:', moreButton);
 
-    // 隨機等待 2-5 秒後再點擊，避免被當成自動化程式
-    const randomDelay1 = Math.random() * 3000 + 2000; 
+    // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
+    const randomDelay1 = Math.random() * 2000 + 1000; 
     console.log(`[Threads] 等待 ${Math.round(randomDelay1)}ms 後點擊 "More" 按鈕`);
     await waitForMilliseconds(randomDelay1);
 
@@ -567,8 +604,8 @@ async function autoClickAboutProfileAndGetRegion() {
 
     console.log('[Threads] 找到 "About this profile" 按鈕:', aboutButton);
 
-    // 隨機等待 2-5 秒後再點擊，避免被當成自動化程式
-    const randomDelay2 = Math.random() * 3000 + 2000; 
+    // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
+    const randomDelay2 = Math.random() * 2000 + 1000; 
     console.log(`[Threads] 等待 ${Math.round(randomDelay2)}ms 後點擊 "About this profile" 按鈕`);
     await waitForMilliseconds(randomDelay2);
 
@@ -719,63 +756,305 @@ function waitForMilliseconds(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ==================== 在頁面上顯示/隱藏地區標籤功能 ====================
+// ==================== 在頁面上顯示/隱藏用戶資訊標籤功能 ====================
 
+// 顏色判斷條件常數（方便未來調整）
+const RED_FLAG_LOCATION = 'China';
+const RED_FLAG_PROFILE_TAGS = [ '仇恨言論','統戰言論'];
+const GRAY_FLAG_PROFILE_TAGS = [ '憤世抱怨','易怒','攻擊發言','人身攻擊'];
+const GREEN_FLAG_LOCATION = 'Taiwan';
+const NOT_USE_RED_FLAG = true; // 由於判斷準確度有限，暫時不使用紅色標籤
 /**
- * 根據地區名稱返回對應的標籤顏色
+ * 根據地區名稱和側寫標籤返回對應的標籤顏色
  * @param {string} region - 地區名稱
+ * @param {string} profile - 側寫標籤（逗號分隔）
  * @returns {Object} 包含 backgroundColor 和 textColor 的物件
  */
-function getRegionColor(region) {
-  if (!region) {
-    // 待查詢：黃色
+function getRegionColor(region, profile = null) {
+  // 1. 尚未查詢/查詢中：黃色（但如果已有側寫則視為已完成，使用灰色）
+  if (!region && !profile) {
     return {
       backgroundColor: '#ffc107',
       textColor: '#333'
     };
   }
 
-  // 未揭露/失敗：灰色
-  if (region === '未揭露' || region.includes('查詢失敗') || region.includes('錯誤')) {
-    return {
-      backgroundColor: '#9e9e9e',
-      textColor: 'white'
-    };
+  // 2. 已完成查詢（有地區或有側寫）
+  // 檢查側寫標籤是否包含紅旗標籤或灰旗標籤
+  // 支援新格式「標籤:理由」，只取標籤部分進行比對
+  const profileTags = profile ? profile.split(',').map(entry => {
+    const trimmed = entry.trim();
+    const colonIndex = trimmed.indexOf(':') !== -1 ? trimmed.indexOf(':') : trimmed.indexOf('：');
+    return colonIndex > 0 ? trimmed.substring(0, colonIndex).trim() : trimmed;
+  }) : [];
+  const hasRedFlagProfileTag = profileTags.some(tag => 
+    RED_FLAG_PROFILE_TAGS.includes(tag)
+  );
+  const hasGrayFlagProfileTag = profileTags.some(tag => 
+    GRAY_FLAG_PROFILE_TAGS.includes(tag)
+  );
+
+  if( NOT_USE_RED_FLAG === false){
+    // 2.1 紅色：所在地為 China 或 側寫標籤中有「人身攻擊」或「仇恨言論」（最高優先級）
+    if (region === RED_FLAG_LOCATION || region === '中國' || hasRedFlagProfileTag) {
+      return {
+        backgroundColor: '#f44336',
+        textColor: 'white'
+      };
+    }
   }
 
-  // Taiwan：綠色
-  if (region === 'Taiwan' || region === '台灣') {
+  // 2.2 綠色：所在地為 Taiwan，沒有紅旗標籤，也沒有灰旗標籤
+  if ((region === GREEN_FLAG_LOCATION || region === '台灣') && !hasRedFlagProfileTag && !hasGrayFlagProfileTag) {
     return {
       backgroundColor: '#4caf50',
       textColor: 'white'
     };
   }
 
-  // China：紅色
-  if (region === 'China' || region === '中國') {
-    return {
-      backgroundColor: '#f44336',
-      textColor: 'white'
-    };
-  }
-
-  // 其他國家地區：粉紅色
+  // 2.3 灰色：其他的結果（包含未揭露、查詢失敗、其他國家地區）
   return {
-    backgroundColor: '#E91E63',
+    backgroundColor: '#9e9e9e',
     textColor: 'white'
   };
 }
 
 /**
- * 在頁面上顯示地區標籤（添加或更新標籤並設為可見）
- * @param {Object} regionData - 地區資料，格式: { "@username": "Taiwan", ... }
+ * 從「標籤:理由」格式中提取只有標籤的字串
+ * @param {string} profile - 側寫標籤（可能包含理由）
+ * @returns {string} 只有標籤的字串
+ */
+function extractTagsOnly(profile) {
+  if (!profile) return '';
+  return profile.split(',').map(entry => {
+    const trimmed = entry.trim();
+    const colonIndex = trimmed.indexOf(':') !== -1 ? trimmed.indexOf(':') : trimmed.indexOf('：');
+    return colonIndex > 0 ? trimmed.substring(0, colonIndex).trim() : trimmed;
+  }).join(',');
+}
+
+/**
+ * 從「標籤:理由」格式中提取標籤和理由的陣列
+ * @param {string} profile - 側寫標籤（可能包含理由）
+ * @returns {Array<{tag: string, reason: string}>} 標籤和理由的陣列
+ */
+function parseTagsWithReasons(profile) {
+  if (!profile) return [];
+  return profile.split(',').map(entry => {
+    const trimmed = entry.trim();
+    const colonIndex = trimmed.indexOf(':') !== -1 ? trimmed.indexOf(':') : trimmed.indexOf('：');
+    if (colonIndex > 0) {
+      return {
+        tag: trimmed.substring(0, colonIndex).trim(),
+        reason: trimmed.substring(colonIndex + 1).trim()
+      };
+    }
+    return { tag: trimmed, reason: '' };
+  }).filter(item => item.tag.length > 0);
+}
+
+/**
+ * 創建可點擊的標籤 DOM 元素（點擊顯示理由）
+ * @param {Array<{tag: string, reason: string}>} tagsWithReasons - 標籤和理由陣列
+ * @returns {HTMLElement} 包含可點擊標籤的容器
+ */
+function createClickableTagsElement(tagsWithReasons) {
+  const container = document.createElement('span');
+  container.className = 'threads-tags-container';
+  container.style.cssText = 'display: inline; position: relative;';
+
+  tagsWithReasons.forEach((item, index) => {
+    if (index > 0) {
+      const separator = document.createTextNode(', ');
+      container.appendChild(separator);
+    }
+
+    const tagSpan = document.createElement('span');
+    tagSpan.className = 'threads-clickable-tag';
+    tagSpan.textContent = item.tag;
+    tagSpan.dataset.reason = item.reason;
+    
+    // 基本樣式 - 恢復 pointer-events 讓標籤可點擊
+    tagSpan.style.cssText = `
+      cursor: ${item.reason ? 'pointer' : 'default'};
+      border-bottom: ${item.reason ? '1px dashed rgba(255,255,255,0.6)' : 'none'};
+      position: relative;
+      pointer-events: auto;
+    `;
+
+    if (item.reason) {
+      // 點擊事件 - 顯示/隱藏 tooltip
+      tagSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        
+        // 檢查是否已有 tooltip（現在 tooltip 在 body 中）
+        if (tagSpan._currentTooltip && document.body.contains(tagSpan._currentTooltip)) {
+          tagSpan._currentTooltip.remove();
+          tagSpan._currentTooltip = null;
+          return;
+        }
+
+        // 關閉其他所有 tooltip
+        document.querySelectorAll('.threads-tag-tooltip').forEach(t => t.remove());
+
+        // 創建 tooltip（使用 fixed positioning 避免被父元素 overflow 裁切）
+        const tooltip = document.createElement('div');
+        tooltip.className = 'threads-tag-tooltip';
+        tooltip.textContent = item.reason;
+        
+        // 取得標籤的位置
+        const rect = tagSpan.getBoundingClientRect();
+        
+        tooltip.style.cssText = `
+          position: fixed;
+          top: ${rect.bottom + 8}px;
+          left: ${rect.left + rect.width / 2}px;
+          transform: translateX(-50%);
+          background: #333;
+          color: #fff;
+          padding: 6px 10px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 400;
+          white-space: nowrap;
+          z-index: 2147483647;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          animation: fadeIn 0.15s ease-out;
+          pointer-events: none;
+        `;
+
+        // 創建小三角形指向標籤（在 tooltip 上方）
+        const arrow = document.createElement('div');
+        arrow.style.cssText = `
+          position: absolute;
+          top: -6px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 0;
+          height: 0;
+          border-left: 6px solid transparent;
+          border-right: 6px solid transparent;
+          border-bottom: 6px solid #333;
+        `;
+        tooltip.appendChild(arrow);
+
+        // 將 tooltip 加到 body 而不是 tagSpan，避免被裁切
+        document.body.appendChild(tooltip);
+
+        // 關閉 tooltip 的函數
+        const removeTooltip = () => {
+          tooltip.remove();
+          tagSpan._currentTooltip = null;
+          document.removeEventListener('click', closeTooltip);
+          window.removeEventListener('scroll', onScroll, true);
+        };
+
+        // 點擊其他地方關閉 tooltip
+        const closeTooltip = (event) => {
+          if (!tagSpan.contains(event.target)) {
+            removeTooltip();
+          }
+        };
+
+        // 頁面捲動時關閉 tooltip
+        const onScroll = () => {
+          removeTooltip();
+        };
+
+        setTimeout(() => {
+          document.addEventListener('click', closeTooltip);
+          // 使用 capture 模式監聽所有捲動事件（包括子元素的捲動）
+          window.addEventListener('scroll', onScroll, true);
+        }, 0);
+
+        // 儲存 tooltip 引用以便後續檢查
+        tagSpan._currentTooltip = tooltip;
+      });
+    }
+
+    container.appendChild(tagSpan);
+  });
+
+  return container;
+}
+
+/**
+ * 生成標籤文字（包含地區和側寫）
+ * @param {string|null} region - 地區
+ * @param {string|null} profile - 側寫標籤（可能包含理由）
+ * @returns {string} 標籤文字
+ */
+function generateLabelText(region, profile) {
+  let text;
+  if (region) {
+    text = `所在地：${region}`;
+  } else if (profile) {
+    // 有側寫但無地區，顯示「未揭露」
+    text = `所在地：未揭露`;
+  } else {
+    text = `所在地：待查詢`;
+  }
+  if (profile) {
+    // 顯示時只顯示標籤，不顯示理由
+    const tagsOnly = extractTagsOnly(profile);
+    text += ` (${tagsOnly})`;
+  }
+  return text;
+}
+
+/**
+ * 生成標籤 DOM 元素（包含地區和可點擊的側寫標籤）
+ * @param {string|null} region - 地區
+ * @param {string|null} profile - 側寫標籤（可能包含理由）
+ * @returns {HTMLElement} 標籤 DOM 元素
+ */
+function generateLabelElement(region, profile) {
+  const container = document.createElement('span');
+  container.className = 'threads-label-text';
+
+  // 地區文字
+  let locationText;
+  if (region) {
+    locationText = `所在地：${region}`;
+  } else if (profile) {
+    locationText = `所在地：未揭露`;
+  } else {
+    locationText = `所在地：待查詢`;
+  }
+
+  const locationSpan = document.createTextNode(locationText);
+  container.appendChild(locationSpan);
+
+  // 如果有側寫，添加可點擊的標籤
+  if (profile) {
+    const tagsWithReasons = parseTagsWithReasons(profile);
+    if (tagsWithReasons.length > 0) {
+      const openParen = document.createTextNode(' (');
+      container.appendChild(openParen);
+      
+      const clickableTags = createClickableTagsElement(tagsWithReasons);
+      container.appendChild(clickableTags);
+      
+      const closeParen = document.createTextNode(')');
+      container.appendChild(closeParen);
+    }
+  }
+
+  return container;
+}
+
+/**
+ * 在頁面上顯示用戶資訊標籤（添加或更新標籤並設為可見）
+ * @param {Object} regionData - 地區資料，格式: { "@username": { region: "Taiwan", profile: "標籤" }, ... }
+ *                              或舊格式: { "@username": "Taiwan", ... }
  * @returns {Object} 結果 { addedCount, totalCount }
  */
 function showRegionLabelsOnPage(regionData) {
   let addedCount = 0;
   const totalCount = currentUserElementsData.length;
 
-  console.log(`[Threads] 開始在頁面上添加地區標籤，共 ${totalCount} 個用戶`);
+  console.log(`[Threads] 開始在頁面上添加用戶資訊標籤，共 ${totalCount} 個用戶`);
 
   currentUserElementsData.forEach((userData, index) => {
     try {
@@ -787,15 +1066,30 @@ function showRegionLabelsOnPage(regionData) {
         return;
       }
 
+      // 解析 regionData，支援新舊格式
+      let region = null;
+      let profile = null;
+      const accountData = regionData[account];
+      
+      if (accountData) {
+        if (typeof accountData === 'object' && accountData !== null) {
+          // 新格式: { region: "Taiwan", profile: "標籤" }
+          region = accountData.region;
+          profile = accountData.profile;
+        } else {
+          // 舊格式: "Taiwan"
+          region = accountData;
+        }
+      }
+
       // 檢查是否已經添加過標籤（避免重複添加）
       const existingLabel = element.querySelector('.threads-region-label');
       if (existingLabel) {
         // 更新現有標籤
-        const region = regionData[account];
 
         // 更新文字（選擇文字 span，不是三角形 span）
         const labelTextSpan = existingLabel.querySelector('.threads-label-text') || existingLabel;
-        const newText = region ? `所在地：${region}` : `所在地：待查詢`;
+        const newText = generateLabelText(region, profile);
 
         //console.log(`[Threads] 更新標籤文字 ${account}: ${region}`);
 
@@ -804,7 +1098,7 @@ function showRegionLabelsOnPage(regionData) {
           existingLabel.innerHTML = '';
           
           // 重建時加入三角形
-          const colors = getRegionColor(region);
+          const colors = getRegionColor(region, profile);
           existingLabel.style.position = 'relative';
           existingLabel.style.marginLeft = '12px';
           
@@ -822,31 +1116,39 @@ function showRegionLabelsOnPage(regionData) {
           `;
           existingLabel.appendChild(arrow);
           
-          const textSpan = document.createElement('span');
-          textSpan.className = 'threads-label-text';
-          textSpan.textContent = newText;
-          existingLabel.appendChild(textSpan);
+          // 使用可點擊的標籤元素
+          const labelElement = generateLabelElement(region, profile);
+          existingLabel.appendChild(labelElement);
 
-          // 如果是待查詢且沒有 [C] 按鈕，添加
-          if (!region) {
-            addQueryButton(existingLabel, account, index, textSpan);
+          // 如果是待查詢且沒有 [C] 按鈕，添加（但如果已有側寫則視為已完成）
+          if (!region && !profile) {
+            addQueryButton(existingLabel, account, index, labelElement);
           }
         } else {
-          labelTextSpan.textContent = newText;
+          // 替換為可點擊的標籤元素
+          const newLabelElement = generateLabelElement(region, profile);
+          labelTextSpan.replaceWith(newLabelElement);
 
           // 處理 [C] 按鈕
           const existingButton = existingLabel.querySelector('.threads-query-btn');
-          if (region && existingButton) {
+          // 已有地區或已有側寫，視為已完成查詢
+          const isCompleted = region || profile;
+          if (isCompleted && existingButton) {
             // 已查詢，移除按鈕
             existingButton.remove();
-          } else if (!region && !existingButton) {
+          } else if (!isCompleted && !existingButton) {
             // 待查詢且沒有按鈕，添加
             addQueryButton(existingLabel, account, index, labelTextSpan);
           }
+
+          // 如果已完成查詢（有地區或有側寫），添加重新整理按鈕
+          if (isCompleted) {
+            addRefreshButton(existingLabel, account, labelTextSpan);
+          }
         }
 
-        // 更新顏色（根據地區使用對應顏色）
-        const colors = getRegionColor(region);
+        // 更新顏色（根據地區和側寫標籤使用對應顏色）
+        const colors = getRegionColor(region, profile);
         existingLabel.style.backgroundColor = colors.backgroundColor;
         existingLabel.style.color = colors.textColor;
 
@@ -863,20 +1165,18 @@ function showRegionLabelsOnPage(regionData) {
         return;
       }
 
-      // 取得該帳號的地區資訊
-      const region = regionData[account];
+      // 根據地區和側寫標籤取得對應顏色
+      const colors = getRegionColor(region, profile);
 
-      // 根據地區取得對應顏色
-      const colors = getRegionColor(region);
-
-      // 判斷是否需要查詢按鈕（只有待查詢狀態需要）
-      const needButton = !region;
+      // 判斷是否需要查詢按鈕（只有待查詢狀態需要，已有地區或已有側寫則視為已完成）
+      const needButton = !region && !profile;
 
       // 創建標籤容器 div
       const label = document.createElement('div');
       label.className = 'threads-region-label';
 
       // 設定樣式（左方帶小三角形突出的標籤）
+      // 使用 pointer-events: none 阻止滑鼠事件觸發用戶小卡 panel
       label.style.cssText = `
         display: inline-flex;
         align-items: center;
@@ -890,6 +1190,7 @@ function showRegionLabelsOnPage(regionData) {
         font-weight: 600;
         vertical-align: middle;
         position: relative;
+        pointer-events: none;
       `;
 
       // 創建左側三角形
@@ -909,15 +1210,16 @@ function showRegionLabelsOnPage(regionData) {
       // 將三角形加入標籤
       label.appendChild(arrow);
 
-      // 創建文字部分
-      const labelText = document.createElement('span');
-      labelText.className = 'threads-label-text';
-      labelText.textContent = region ? `所在地：${region}` : `所在地：待查詢`;
+      // 創建文字部分（使用可點擊的標籤元素）
+      const labelText = generateLabelElement(region, profile);
       label.appendChild(labelText);
 
       // 如果需要，添加 [C] 按鈕
       if (needButton) {
         addQueryButton(label, account, index, labelText);
+      } else {
+        // 已有地區資訊，添加重新整理按鈕
+        addRefreshButton(label, account, labelText);
       }
 
       // 在元素後面插入標籤
@@ -985,6 +1287,7 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
     cursor: pointer;
     line-height: 14px;
     min-width: 32px;
+    pointer-events: auto;
   `;
 
   // 懸停效果
@@ -1036,7 +1339,24 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
       if (response && response.success && response.region) {
         // 查詢成功且有地區資訊，根據地區設置對應顏色
         const colors = getRegionColor(response.region);
-        labelTextSpan.textContent = `所在地：${response.region}`;
+        
+        // 查詢 sidepanel 是否已有該用戶的側寫結果
+        let profileText = '';
+        try {
+          const profileResponse = await chrome.runtime.sendMessage({
+            action: 'getUserProfile',
+            account: accountToQuery
+          });
+          if (profileResponse && profileResponse.success && profileResponse.profile) {
+            profileText = profileResponse.profile;
+            console.log(`[Threads] 找到已有的側寫結果: ${accountToQuery} - ${profileText}`);
+          }
+        } catch (err) {
+          console.log('[Threads] 查詢側寫結果失敗:', err.message);
+        }
+        
+        // 更新標籤文字（包含側寫如果有的話）
+        labelTextSpan.textContent = generateLabelText(response.region, profileText || null);
         labelElement.style.backgroundColor = colors.backgroundColor;
         labelElement.style.color = colors.textColor;
         // 更新三角形顏色
@@ -1045,7 +1365,9 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
           arrowElement.style.borderRightColor = colors.backgroundColor;
         }
         queryButton.remove();
-        console.log(`[Threads] 查詢成功: ${accountToQuery} - ${response.region}`);
+        // 添加重新整理按鈕
+        addRefreshButton(labelElement, accountToQuery, labelTextSpan);
+        console.log(`[Threads] 查詢成功: ${accountToQuery} - ${response.region}${profileText ? ` (${profileText})` : ''}`);
 
         // 更新 sidepanel 狀態欄
         chrome.runtime.sendMessage({
@@ -1066,8 +1388,23 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
         });
       } else {
         // 查詢失敗或未找到地區資訊，設置為未揭露
-        const colors = getRegionColor('未揭露');
-        labelTextSpan.textContent = `所在地：未揭露`;
+        // 查詢 sidepanel 是否已有該用戶的側寫結果
+        let profileText = '';
+        try {
+          const profileResponse = await chrome.runtime.sendMessage({
+            action: 'getUserProfile',
+            account: accountToQuery
+          });
+          if (profileResponse && profileResponse.success && profileResponse.profile) {
+            profileText = profileResponse.profile;
+            console.log(`[Threads] 找到已有的側寫結果: ${accountToQuery} - ${profileText}`);
+          }
+        } catch (err) {
+          console.log('[Threads] 查詢側寫結果失敗:', err.message);
+        }
+
+        const colors = getRegionColor('未揭露', profileText || null);
+        labelTextSpan.textContent = generateLabelText('未揭露', profileText || null);
         labelElement.style.backgroundColor = colors.backgroundColor;
         labelElement.style.color = colors.textColor;
         // 更新三角形顏色
@@ -1076,7 +1413,9 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
           arrowElement.style.borderRightColor = colors.backgroundColor;
         }
         queryButton.remove();
-        console.log(`[Threads] 查詢完成但未找到地區: ${accountToQuery}`);
+        // 添加重新整理按鈕
+        addRefreshButton(labelElement, accountToQuery, labelTextSpan);
+        console.log(`[Threads] 查詢完成但未找到地區: ${accountToQuery}${profileText ? ` (${profileText})` : ''}`);
 
         // 將查詢結果同步到 sidepanel 的 currentGetUserListArray
         chrome.runtime.sendMessage({
@@ -1090,8 +1429,24 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
     } catch (error) {
       // 發生錯誤，設置為未揭露
       console.log('[Threads] 查詢錯誤:', error);
-      const colors = getRegionColor('未揭露');
-      labelTextSpan.textContent = `所在地：未揭露`;
+      
+      // 查詢 sidepanel 是否已有該用戶的側寫結果
+      let profileText = '';
+      try {
+        const profileResponse = await chrome.runtime.sendMessage({
+          action: 'getUserProfile',
+          account: accountToQuery
+        });
+        if (profileResponse && profileResponse.success && profileResponse.profile) {
+          profileText = profileResponse.profile;
+          console.log(`[Threads] 找到已有的側寫結果: ${accountToQuery} - ${profileText}`);
+        }
+      } catch (err) {
+        console.log('[Threads] 查詢側寫結果失敗:', err.message);
+      }
+
+      const colors = getRegionColor('未揭露', profileText || null);
+      labelTextSpan.textContent = generateLabelText('未揭露', profileText || null);
       labelElement.style.backgroundColor = colors.backgroundColor;
       labelElement.style.color = colors.textColor;
       // 更新三角形顏色
@@ -1100,6 +1455,8 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
         arrowElement.style.borderRightColor = colors.backgroundColor;
       }
       queryButton.remove();
+      // 添加重新整理按鈕
+      addRefreshButton(labelElement, accountToQuery, labelTextSpan);
 
       // 將查詢結果同步到 sidepanel 的 currentGetUserListArray
       chrome.runtime.sendMessage({
@@ -1127,15 +1484,237 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
 }
 
 /**
- * 隱藏頁面上所有的地區標籤
+ * 添加重新整理按鈕（cycle icon）到標籤
+ * @param {Element} labelElement - 標籤元素
+ * @param {string} account - 帳號名稱
+ * @param {Element} labelTextSpan - 標籤文字 span 元素
+ */
+function addRefreshButton(labelElement, account, labelTextSpan) {
+  // 檢查是否已有重新整理按鈕
+  const existingRefreshBtn = labelElement.querySelector('.threads-refresh-btn');
+  if (existingRefreshBtn) {
+    return;
+  }
+
+  const refreshButton = document.createElement('button');
+  refreshButton.className = 'threads-refresh-btn';
+  refreshButton.dataset.account = account;
+  refreshButton.title = '重新查詢';
+
+  // 使用 SVG cycle icon
+  refreshButton.innerHTML = `
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+    </svg>
+  `;
+
+  refreshButton.style.cssText = `
+    margin-left: 4px;
+    padding: 2px;
+    background-color: transparent;
+    color: inherit;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    pointer-events: auto;
+  `;
+
+  // 懸停效果
+  refreshButton.addEventListener('mouseenter', () => {
+    refreshButton.style.opacity = '1';
+    refreshButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+  });
+  refreshButton.addEventListener('mouseleave', () => {
+    refreshButton.style.opacity = '0.7';
+    refreshButton.style.backgroundColor = 'transparent';
+  });
+
+  // 點擊事件處理
+  refreshButton.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    const accountToRefresh = refreshButton.dataset.account;
+    console.log(`[Threads] 重新整理按鈕被點擊: ${accountToRefresh}`);
+
+    // 禁用按鈕並顯示旋轉動畫
+    refreshButton.disabled = true;
+    refreshButton.style.cursor = 'not-allowed';
+    refreshButton.style.animation = 'spin 1s linear infinite';
+
+    // 添加旋轉動畫樣式（如果還沒有）
+    if (!document.getElementById('threads-refresh-spin-style')) {
+      const style = document.createElement('style');
+      style.id = 'threads-refresh-spin-style';
+      style.textContent = `
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // 1. 先清除標籤上顯示的地區與側寫，重建為純文字節點
+    // 移除原有的 labelTextSpan 內容，替換為新的文字節點
+    const newLabelText = document.createTextNode(`所在地：查詢中`);
+    labelTextSpan.replaceWith(newLabelText);
+    // 更新 labelTextSpan 引用為新的文字節點（用於後續更新）
+    let currentLabelNode = newLabelText;
+
+    // 更新標籤顏色為黃色（查詢中）
+    const pendingColors = getRegionColor(null);
+    labelElement.style.backgroundColor = pendingColors.backgroundColor;
+    labelElement.style.color = pendingColors.textColor;
+    const arrowElement = labelElement.querySelector('span[style*="border-right"]');
+    if (arrowElement) {
+      arrowElement.style.borderRightColor = pendingColors.backgroundColor;
+    }
+
+    try {
+      // 2. 移除該用戶的 cache（地區和側寫）
+      console.log(`[Threads] 移除 ${accountToRefresh} 的快取（地區和側寫）`);
+      await chrome.runtime.sendMessage({
+        action: 'removeUserCache',
+        account: accountToRefresh
+      });
+
+      // 同時清除 sidepanel 中該用戶的側寫資料
+      chrome.runtime.sendMessage({
+        action: 'clearUserProfile',
+        account: accountToRefresh
+      }).catch(err => {
+        console.log('[Threads] 清除 sidepanel 側寫資料失敗:', err.message);
+      });
+
+      // 更新 sidepanel 狀態欄
+      chrome.runtime.sendMessage({
+        action: 'updateSidepanelStatus',
+        message: `重新查詢: ${accountToRefresh}`,
+        type: 'info'
+      }).catch(err => {
+        console.log('[Threads] 更新 sidepanel 狀態失敗:', err.message);
+      });
+
+      // 3. 發送重新查詢請求
+      const response = await chrome.runtime.sendMessage({
+        action: 'manualQueryRegion',
+        account: accountToRefresh
+      });
+
+      console.log(`[Threads] 重新查詢響應:`, response);
+
+      // 4. 處理查詢結果
+      let profileText = '';
+      try {
+        const profileResponse = await chrome.runtime.sendMessage({
+          action: 'getUserProfile',
+          account: accountToRefresh
+        });
+        if (profileResponse && profileResponse.success && profileResponse.profile) {
+          profileText = profileResponse.profile;
+        }
+      } catch (err) {
+        console.log('[Threads] 查詢側寫結果失敗:', err.message);
+      }
+
+      if (response && response.success && response.region) {
+        const colors = getRegionColor(response.region, profileText || null);
+        // 使用 generateLabelElement 重建完整的標籤元素（包含可點擊的側寫標籤）
+        const newLabelElement = generateLabelElement(response.region, profileText || null);
+        currentLabelNode.replaceWith(newLabelElement);
+        labelElement.style.backgroundColor = colors.backgroundColor;
+        labelElement.style.color = colors.textColor;
+        if (arrowElement) {
+          arrowElement.style.borderRightColor = colors.backgroundColor;
+        }
+
+        // 更新 sidepanel 狀態欄
+        chrome.runtime.sendMessage({
+          action: 'updateSidepanelStatus',
+          message: `重新查詢成功: ${accountToRefresh} - ${response.region}`,
+          type: 'success'
+        }).catch(err => {
+          console.log('[Threads] 更新 sidepanel 狀態失敗:', err.message);
+        });
+
+        // 同步到 sidepanel
+        chrome.runtime.sendMessage({
+          action: 'updateUserRegion',
+          account: accountToRefresh,
+          region: response.region
+        }).catch(err => {
+          console.log('[Threads] 同步查詢結果到 sidepanel 失敗:', err.message);
+        });
+      } else {
+        const colors = getRegionColor('未揭露', profileText || null);
+        // 使用 generateLabelElement 重建完整的標籤元素
+        const newLabelElement = generateLabelElement('未揭露', profileText || null);
+        currentLabelNode.replaceWith(newLabelElement);
+        labelElement.style.backgroundColor = colors.backgroundColor;
+        labelElement.style.color = colors.textColor;
+        if (arrowElement) {
+          arrowElement.style.borderRightColor = colors.backgroundColor;
+        }
+
+        // 同步到 sidepanel
+        chrome.runtime.sendMessage({
+          action: 'updateUserRegion',
+          account: accountToRefresh,
+          region: '未揭露'
+        }).catch(err => {
+          console.log('[Threads] 同步查詢結果到 sidepanel 失敗:', err.message);
+        });
+      }
+    } catch (error) {
+      console.log('[Threads] 重新查詢錯誤:', error);
+      const colors = getRegionColor('未揭露');
+      // 使用 generateLabelElement 重建標籤元素
+      const newLabelElement = generateLabelElement('未揭露', null);
+      currentLabelNode.replaceWith(newLabelElement);
+      labelElement.style.backgroundColor = colors.backgroundColor;
+      labelElement.style.color = colors.textColor;
+      if (arrowElement) {
+        arrowElement.style.borderRightColor = colors.backgroundColor;
+      }
+    } finally {
+      // 恢復按鈕狀態
+      refreshButton.disabled = false;
+      refreshButton.style.cursor = 'pointer';
+      refreshButton.style.animation = '';
+    }
+  }, true);
+
+  // 阻止事件傳播
+  refreshButton.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  refreshButton.addEventListener('mouseup', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  labelElement.appendChild(refreshButton);
+}
+
+/**
+ * 隱藏頁面上所有的用戶資訊標籤
  * @returns {Object} 結果 { hiddenCount }
  */
 function hideRegionLabelsOnPage() {
   let hiddenCount = 0;
 
-  console.log(`[Threads] 開始隱藏頁面上的地區標籤`);
+  console.log(`[Threads] 開始隱藏頁面上的用戶資訊標籤`);
 
-  // 找到所有的地區標籤並隱藏
+  // 找到所有的用戶資訊標籤並隱藏
   const allLabels = document.querySelectorAll('.threads-region-label');
 
   allLabels.forEach(label => {
@@ -1151,15 +1730,15 @@ function hideRegionLabelsOnPage() {
 }
 
 /**
- * 移除頁面上所有的地區標籤（完全刪除）
+ * 移除頁面上所有的用戶資訊標籤（完全刪除）
  * @returns {Object} 結果 { removedCount }
  */
 function removeRegionLabelsOnPage() {
   let removedCount = 0;
 
-  console.log(`[Threads] 開始移除頁面上的所有地區標籤`);
+  console.log(`[Threads] 開始移除頁面上的所有用戶資訊標籤`);
 
-  // 找到所有的地區標籤並移除
+  // 找到所有的用戶資訊標籤並移除
   const allLabels = document.querySelectorAll('.threads-region-label');
 
   allLabels.forEach(label => {
@@ -1558,4 +2137,45 @@ if (document.readyState === 'loading') {
   // DOM 已經載入完成
   console.log('[Threads] DOM 已載入');
   initPageFeatures();
+}
+
+
+function extractTextFromDocument() {
+  const walker = document.createTreeWalker(
+    document,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        const text = node.textContent.trim();
+        if (!text) return NodeFilter.FILTER_REJECT;
+
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+
+        const tagName = parent.tagName.toLowerCase();
+
+        // 排除這些不該取得文字的標籤
+        if (['script', 'style', 'noscript', 'iframe', 'svg'].includes(tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    }
+  );
+
+  const texts = [];
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const parent = node.parentElement;
+    const grandparent = parent?.parentElement;
+    
+    let text = node.textContent.trim();
+
+    texts.push(text);
+  }
+
+  
+  return texts.join('\n');
 }

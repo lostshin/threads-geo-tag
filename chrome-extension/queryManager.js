@@ -12,6 +12,7 @@ let activeQueryCount = 0; // 當前正在執行的查詢數量
 
 // ==================== 快取配置 ====================
 const CACHE_KEY = 'regionCache'; // chrome.storage 中的鍵名
+const PROFILE_CACHE_KEY = 'profileCache'; // 用戶側寫快取的鍵名
 const CACHE_EXPIRY_DAYS = 30; // 快取過期天數（30 天）
 
 // ==================== 快取管理 ====================
@@ -89,6 +90,32 @@ async function clearCache() {
 }
 
 /**
+ * 移除單一用戶的快取
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @returns {Promise<boolean>} 是否成功移除
+ */
+async function removeUserCache(username) {
+  try {
+    const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+    const result = await chrome.storage.local.get([CACHE_KEY]);
+    const cache = result[CACHE_KEY] || {};
+
+    if (cache[cleanUsername]) {
+      delete cache[cleanUsername];
+      await chrome.storage.local.set({ [CACHE_KEY]: cache });
+      console.log(`[Cache] 已移除 @${cleanUsername} 的快取`);
+      return true;
+    } else {
+      console.log(`[Cache] @${cleanUsername} 沒有快取資料`);
+      return false;
+    }
+  } catch (error) {
+    console.error('[Cache] 移除用戶快取失敗:', error);
+    return false;
+  }
+}
+
+/**
  * 獲取快取統計信息
  * @returns {Promise<Object>} 快取統計信息
  */
@@ -142,6 +169,202 @@ async function getAllCachedRegions() {
   } catch (error) {
     console.error('[Cache] 獲取所有快取失敗:', error);
     return {};
+  }
+}
+
+// ==================== 用戶側寫快取管理 ====================
+
+/**
+ * 從快取中讀取用戶側寫分析結果
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @returns {Promise<{profile: string}|null>} 返回側寫資料或 null（未找到或已過期）
+ */
+async function getCachedProfile(username) {
+  try {
+    const result = await chrome.storage.local.get([PROFILE_CACHE_KEY]);
+    const cache = result[PROFILE_CACHE_KEY] || {};
+
+    if (cache[username]) {
+      const cached = cache[username];
+      const now = Date.now();
+      const expiryTime = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+
+      if (now - cached.timestamp < expiryTime) {
+        console.log(`[ProfileCache] 命中快取 @${username}: ${cached.profile}`);
+        return {
+          profile: cached.profile
+        };
+      } else {
+        console.log(`[ProfileCache] 快取已過期 @${username}`);
+        delete cache[username];
+        await chrome.storage.local.set({ [PROFILE_CACHE_KEY]: cache });
+        return null;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[ProfileCache] 讀取快取失敗:', error);
+    return null;
+  }
+}
+
+/**
+ * 將用戶側寫分析結果保存到快取
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @param {string} profile - 側寫標籤
+ * @returns {Promise<void>}
+ */
+async function saveCachedProfile(username, profile) {
+  try {
+    const result = await chrome.storage.local.get([PROFILE_CACHE_KEY]);
+    const cache = result[PROFILE_CACHE_KEY] || {};
+
+    cache[username] = {
+      profile: profile,
+      timestamp: Date.now()
+    };
+
+    await chrome.storage.local.set({ [PROFILE_CACHE_KEY]: cache });
+    console.log(`[ProfileCache] 已保存快取 @${username}: ${profile}`);
+  } catch (error) {
+    console.error('[ProfileCache] 保存快取失敗:', error);
+  }
+}
+
+/**
+ * 獲取所有快取的用戶側寫資料
+ * @returns {Promise<Object>} 所有快取資料
+ */
+async function getAllCachedProfiles() {
+  try {
+    const result = await chrome.storage.local.get([PROFILE_CACHE_KEY]);
+    const cache = result[PROFILE_CACHE_KEY] || {};
+    console.log(`[ProfileCache] 獲取所有快取資料，共 ${Object.keys(cache).length} 筆`);
+    return cache;
+  } catch (error) {
+    console.error('[ProfileCache] 獲取所有快取失敗:', error);
+    return {};
+  }
+}
+
+/**
+ * 清除所有側寫快取
+ * @returns {Promise<void>}
+ */
+async function clearProfileCache() {
+  try {
+    await chrome.storage.local.remove([PROFILE_CACHE_KEY]);
+    console.log('[ProfileCache] 已清除所有快取');
+  } catch (error) {
+    console.error('[ProfileCache] 清除快取失敗:', error);
+  }
+}
+
+/**
+ * 移除單一用戶的側寫快取
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @returns {Promise<boolean>} 是否成功移除
+ */
+async function removeUserProfileCache(username) {
+  try {
+    const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+    const result = await chrome.storage.local.get([PROFILE_CACHE_KEY]);
+    const cache = result[PROFILE_CACHE_KEY] || {};
+
+    if (cache[cleanUsername]) {
+      delete cache[cleanUsername];
+      await chrome.storage.local.set({ [PROFILE_CACHE_KEY]: cache });
+      console.log(`[ProfileCache] 已移除 @${cleanUsername} 的快取`);
+      return true;
+    } else {
+      console.log(`[ProfileCache] @${cleanUsername} 沒有快取資料`);
+      return false;
+    }
+  } catch (error) {
+    console.error('[ProfileCache] 移除用戶快取失敗:', error);
+    return false;
+  }
+}
+
+/**
+ * 獲取側寫快取統計信息
+ * @returns {Promise<Object>} 快取統計信息
+ */
+async function getProfileCacheStats() {
+  try {
+    const result = await chrome.storage.local.get([PROFILE_CACHE_KEY]);
+    const cache = result[PROFILE_CACHE_KEY] || {};
+    const now = Date.now();
+    const expiryTime = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+
+    let totalCount = 0;
+    let validCount = 0;
+    let expiredCount = 0;
+
+    for (const username in cache) {
+      totalCount++;
+      if (now - cache[username].timestamp < expiryTime) {
+        validCount++;
+      } else {
+        expiredCount++;
+      }
+    }
+
+    return {
+      totalCount,
+      validCount,
+      expiredCount,
+      expiryDays: CACHE_EXPIRY_DAYS
+    };
+  } catch (error) {
+    console.error('[ProfileCache] 獲取快取統計失敗:', error);
+    return {
+      totalCount: 0,
+      validCount: 0,
+      expiredCount: 0,
+      expiryDays: CACHE_EXPIRY_DAYS
+    };
+  }
+}
+
+// ==================== 頁面捲動輔助函數 ====================
+
+/**
+ * 執行隨機頁面捲動，模擬真實用戶行為
+ * 在頁面載入後執行 3-5 次向下捲動，每次捲動距離和等待時間都有隨機變化
+ * @param {number} tabId - 要執行捲動的分頁 ID
+ * @returns {Promise<void>}
+ */
+async function performRandomScrolls(tabId) {
+  try {
+    // 頁面載入後先等待一小段隨機時間 (500-1500ms)
+    const initialWait = Math.floor(Math.random() * 1000) + 500;
+    console.log(`[QueryManager] 頁面載入後等待 ${initialWait}ms`);
+    await new Promise(resolve => setTimeout(resolve, initialWait));
+
+    // 隨機決定捲動次數 (3-5 次)
+    const scrollCount = Math.floor(Math.random() * 3) + 3;
+    console.log(`[QueryManager] 開始執行 ${scrollCount} 次隨機捲動`);
+
+    for (let i = 0; i < scrollCount; i++) {
+      // 每次捲動前等待隨機時間 (300-800ms)
+      const waitBeforeScroll = Math.floor(Math.random() * 500) + 300;
+      await new Promise(resolve => setTimeout(resolve, waitBeforeScroll));
+
+      // 執行捲動
+      await chrome.tabs.sendMessage(tabId, { action: 'performScroll' });
+
+      // 捲動後等待隨機時間 (400-900ms)
+      const waitAfterScroll = Math.floor(Math.random() * 500) + 400;
+      await new Promise(resolve => setTimeout(resolve, waitAfterScroll));
+
+      console.log(`[QueryManager] 完成第 ${i + 1}/${scrollCount} 次捲動`);
+    }
+
+    console.log(`[QueryManager] 隨機捲動完成`);
+  } catch (error) {
+    console.error('[QueryManager] 執行隨機捲動時發生錯誤:', error);
   }
 }
 
@@ -347,6 +570,326 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   }
 }
 
+/**
+ * 整合查詢：同時進行側寫分析和地點查詢（共用同一個分頁）
+ * 流程：回覆頁取內容 → 貼文頁取內容 → 開始LLM分析(非同步) → 地點查詢 → 關閉分頁
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @param {boolean} enableProfileAnalysis - 是否啟用側寫分析
+ * @param {boolean} shouldKeepTab - 是否保留查詢分頁
+ * @param {string} keepTabFilter - 保留分頁的過濾條件
+ * @param {function} onProfileContentReady - 當側寫內容準備好時的回調（用於開始 LLM 分析）
+ * @returns {Promise<{success: boolean, region?: string, error?: string}>}
+ */
+async function executeIntegratedQuery(username, enableProfileAnalysis = false, shouldKeepTab = false, keepTabFilter = '', onProfileContentReady = null) {
+  const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+
+  let queryTab = null;
+  let userReplyContent = '';
+  let userPostContent = '';
+
+  try {
+    console.log(`[QueryManager] 開始整合查詢 @${cleanUsername}，側寫分析: ${enableProfileAnalysis}`);
+
+    // 隨機延遲 2-5 秒，避免同時發起太多查詢
+    const randomDelay = Math.random() * 2000 + 3000;
+    console.log(`[QueryManager] 等待 ${Math.round(randomDelay / 1000)} 秒後開始查詢`);
+    await new Promise(resolve => setTimeout(resolve, randomDelay));
+
+    // 尋找有開啟 threads.com 的視窗
+    let targetWindowId = null;
+    try {
+      const allWindows = await chrome.windows.getAll({ populate: true });
+      if (allWindows.length > 1) {
+        for (const win of allWindows) {
+          const hasThreadsTab = win.tabs?.some(tab => 
+            tab.url && tab.url.includes('threads.com')
+          );
+          if (hasThreadsTab) {
+            targetWindowId = win.id;
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[QueryManager] 尋找視窗時發生錯誤:', error);
+    }
+
+    const createOptions = {
+      active: false
+    };
+    if (targetWindowId !== null) {
+      createOptions.windowId = targetWindowId;
+    }
+
+    // ==================== 側寫分析部分（如果啟用）====================
+    if (enableProfileAnalysis) {
+      // 檢查側寫快取
+      const cachedProfileData = await getCachedProfile(cleanUsername);
+      if (cachedProfileData !== null) {
+        console.log(`[QueryManager] 使用側寫快取 @${cleanUsername}: ${cachedProfileData.profile}`);
+        // 通知快取結果
+        if (onProfileContentReady) {
+          onProfileContentReady({
+            success: true,
+            profile: cachedProfileData.profile,
+            fromCache: true,
+            needAnalysis: false
+          });
+        }
+      } else {
+        // 步驟 1: 前往回覆頁面取得內容
+        console.log(`[QueryManager] 步驟 1: 前往 @${cleanUsername} 的回覆頁面`);
+        const replyUrl = `https://www.threads.com/@${cleanUsername}/replies?hl=zh-tw`;
+        queryTab = await chrome.tabs.create({ ...createOptions, url: replyUrl });
+
+        // 等待頁面載入完成
+        await new Promise((resolve) => {
+          const listener = (tabId, changeInfo) => {
+            if (tabId === queryTab.id && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+          setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }, 15000);
+        });
+
+        // 等待頁面渲染
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // 確認 content script 已載入並取得內容
+        let contentScriptReady = false;
+        for (let i = 0; i < 10; i++) {
+          try {
+            const pingResponse = await chrome.tabs.sendMessage(queryTab.id, { action: 'ping' });
+            if (pingResponse && pingResponse.success) {
+              contentScriptReady = true;
+              break;
+            }
+          } catch (error) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+
+        if (contentScriptReady) {
+          // 執行隨機捲動以載入更多內容
+          await performRandomScrolls(queryTab.id);
+
+          const replyResponse = await chrome.tabs.sendMessage(queryTab.id, { action: 'extractPageText' });
+          if (replyResponse && replyResponse.success) {
+            userReplyContent = replyResponse.text;
+            console.log(`[QueryManager] 取得回覆內容，長度: ${userReplyContent.length}`);
+          }
+        }
+
+        // 步驟 2: 導航到貼文頁面取得內容（使用同一個分頁）
+        console.log(`[QueryManager] 步驟 2: 導航到 @${cleanUsername} 的貼文頁面`);
+        const postUrl = `https://www.threads.com/@${cleanUsername}?hl=zh-tw`;
+        await chrome.tabs.update(queryTab.id, { url: postUrl });
+
+        // 等待頁面載入完成
+        await new Promise((resolve) => {
+          const listener = (tabId, changeInfo) => {
+            if (tabId === queryTab.id && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+          setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }, 15000);
+        });
+
+        // 等待頁面渲染
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // 確認 content script 已載入並取得內容
+        contentScriptReady = false;
+        for (let i = 0; i < 10; i++) {
+          try {
+            const pingResponse = await chrome.tabs.sendMessage(queryTab.id, { action: 'ping' });
+            if (pingResponse && pingResponse.success) {
+              contentScriptReady = true;
+              break;
+            }
+          } catch (error) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+
+        if (contentScriptReady) {
+          // 執行隨機捲動以載入更多內容
+          await performRandomScrolls(queryTab.id);
+
+          const postResponse = await chrome.tabs.sendMessage(queryTab.id, { action: 'extractPageText' });
+          if (postResponse && postResponse.success) {
+            userPostContent = postResponse.text;
+            console.log(`[QueryManager] 取得貼文內容，長度: ${userPostContent.length}`);
+          }
+        }
+
+        // 步驟 3: 通知側寫內容已準備好，開始 LLM 分析（非同步，不等待）
+        if (userPostContent || userReplyContent) {
+          console.log(`[QueryManager] 步驟 3: 通知開始 LLM 分析（非同步）`);
+          if (onProfileContentReady) {
+            // 非同步呼叫，不等待 LLM 完成
+            onProfileContentReady({
+              success: true,
+              userPostContent: userPostContent,
+              userReplyContent: userReplyContent,
+              needAnalysis: true
+            });
+          }
+        }
+      }
+    }
+
+    // ==================== 地點查詢部分 ====================
+    // 步驟 4: 導航到英文版個人頁面進行地點查詢
+    console.log(`[QueryManager] 步驟 4: 導航到 @${cleanUsername} 的英文版個人頁面查詢地點`);
+    const profileUrl = `https://www.threads.com/@${cleanUsername}?hl=en`;
+
+    if (queryTab) {
+      // 使用現有分頁
+      await chrome.tabs.update(queryTab.id, { url: profileUrl });
+    } else {
+      // 建立新分頁
+      queryTab = await chrome.tabs.create({ ...createOptions, url: profileUrl });
+    }
+
+    // 等待頁面載入完成
+    await new Promise((resolve) => {
+      const listener = (tabId, changeInfo) => {
+        if (tabId === queryTab.id && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }, 10000);
+    });
+
+    // 等待頁面渲染
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 確認 content script 已載入
+    let contentScriptReady = false;
+    for (let i = 0; i < 10; i++) {
+      try {
+        const pingResponse = await chrome.tabs.sendMessage(queryTab.id, { action: 'ping' });
+        if (pingResponse && pingResponse.success) {
+          contentScriptReady = true;
+          break;
+        }
+      } catch (error) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    if (!contentScriptReady) {
+      throw new Error('Content script 未能載入');
+    }
+
+    // 發送地點查詢請求
+    const response = await chrome.tabs.sendMessage(queryTab.id, {
+      action: 'autoQueryRegion',
+      account: cleanUsername
+    });
+
+    // 處理地點查詢結果
+    if (response && response.success) {
+      const region = response.region;
+
+      // 根據設定決定是否關閉分頁
+      let shouldCloseTab = !shouldKeepTab;
+      
+      if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
+        const regionLower = region.toLowerCase();
+        const filterLower = keepTabFilter.trim().toLowerCase();
+        
+        if (regionLower.includes(filterLower)) {
+          shouldCloseTab = true;
+          console.log(`[QueryManager] 結果 "${region}" 包含 "${keepTabFilter}"，關閉分頁`);
+        } else {
+          shouldCloseTab = false;
+          console.log(`[QueryManager] 結果 "${region}" 不包含 "${keepTabFilter}"，保留分頁`);
+        }
+      }
+
+      if (shouldCloseTab && queryTab) {
+        try {
+          await chrome.tabs.remove(queryTab.id);
+          console.log(`[QueryManager] 已關閉查詢分頁: ${queryTab.id}`);
+        } catch (closeError) {
+          console.error('[QueryManager] 關閉分頁時發生錯誤:', closeError);
+        }
+      }
+
+      console.log(`[QueryManager] 查詢成功 @${cleanUsername}: ${region}`);
+
+      // 保存到快取
+      await saveCachedRegion(cleanUsername, region);
+
+      return {
+        success: true,
+        region: region,
+        fromCache: false
+      };
+    } else {
+      // 查詢失敗
+      let shouldCloseTab = !shouldKeepTab;
+      
+      if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
+        shouldCloseTab = false;
+        console.log(`[QueryManager] 查詢失敗，視為不符合 "${keepTabFilter}"，保留分頁`);
+      }
+
+      if (shouldCloseTab && queryTab) {
+        try {
+          await chrome.tabs.remove(queryTab.id);
+        } catch (closeError) {
+          console.error('[QueryManager] 關閉分頁時發生錯誤:', closeError);
+        }
+      }
+
+      return {
+        success: false,
+        error: response?.error || '未知錯誤'
+      };
+    }
+
+  } catch (error) {
+    // 清理分頁
+    let shouldCloseTab = !shouldKeepTab;
+    
+    if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
+      shouldCloseTab = false;
+    }
+
+    if (shouldCloseTab && queryTab) {
+      try {
+        await chrome.tabs.remove(queryTab.id);
+      } catch (closeError) {
+        console.error('[QueryManager] 關閉分頁時發生錯誤:', closeError);
+      }
+    }
+
+    console.error(`[QueryManager] 整合查詢失敗 @${cleanUsername}:`, error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 // ==================== 隊列處理 ====================
 
 /**
@@ -366,7 +909,20 @@ async function processQueryQueue() {
   console.log(`[QueryManager] 開始處理任務 @${task.username} (進行中: ${activeQueryCount}/${queueJobMax}, 隊列剩餘: ${queryQueue.length})`);
 
   try {
-    const result = await executeQuery(task.username, task.shouldKeepTab, task.keepTabFilter);
+    let result;
+    if (task.isIntegrated) {
+      // 整合查詢（側寫分析 + 地點查詢）
+      result = await executeIntegratedQuery(
+        task.username,
+        task.enableProfileAnalysis,
+        task.shouldKeepTab,
+        task.keepTabFilter,
+        task.onProfileContentReady
+      );
+    } else {
+      // 一般查詢（只有地點查詢）
+      result = await executeQuery(task.username, task.shouldKeepTab, task.keepTabFilter);
+    }
     task.resolve(result);
   } catch (error) {
     task.reject(error);
@@ -403,6 +959,7 @@ function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
   return new Promise((resolve, reject) => {
     queryQueue.push({
       username,
+      isIntegrated: false,
       shouldKeepTab,
       keepTabFilter,
       resolve,
@@ -410,6 +967,48 @@ function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
     });
 
     console.log(`[QueryManager] 任務已加入隊列 @${username} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
+
+    // 嘗試立即開始處理隊列
+    processQueryQueue();
+  });
+}
+
+/**
+ * 添加整合查詢任務到隊列（側寫分析 + 地點查詢）
+ * @param {string} username - 用戶帳號
+ * @param {boolean} enableProfileAnalysis - 是否啟用側寫分析
+ * @param {boolean} shouldKeepTab - 是否保留查詢分頁
+ * @param {string} keepTabFilter - 保留分頁的過濾條件
+ * @param {function} onProfileContentReady - 當側寫內容準備好時的回調
+ * @returns {Promise<{success: boolean, region?: string, error?: string}>|null} 返回 null 表示無法加入隊列
+ */
+function addToIntegratedQueryQueue(username, enableProfileAnalysis = false, shouldKeepTab = false, keepTabFilter = '', onProfileContentReady = null) {
+  // 檢查隊列是否已滿
+  if (queryQueue.length >= queryQueueMax) {
+    console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${username}`);
+    return null;
+  }
+
+  // 檢查是否已在隊列中（避免重複）
+  const isAlreadyInQueue = queryQueue.some(task => task.username === username);
+  if (isAlreadyInQueue) {
+    console.log(`[QueryManager] @${username} 已在隊列中，跳過重複加入`);
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    queryQueue.push({
+      username,
+      isIntegrated: true,
+      enableProfileAnalysis,
+      shouldKeepTab,
+      keepTabFilter,
+      onProfileContentReady,
+      resolve,
+      reject
+    });
+
+    console.log(`[QueryManager] 整合查詢任務已加入隊列 @${username} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
 
     // 嘗試立即開始處理隊列
     processQueryQueue();
@@ -519,6 +1118,15 @@ export {
   getAllCachedRegions,
   saveCachedRegion,
   clearCache,
+  removeUserCache,
   getCacheStats,
-  updateMaxConcurrent
+  updateMaxConcurrent,
+  executeIntegratedQuery,
+  addToIntegratedQueryQueue,
+  getCachedProfile,
+  saveCachedProfile,
+  getAllCachedProfiles,
+  clearProfileCache,
+  getProfileCacheStats,
+  removeUserProfileCache
 };
