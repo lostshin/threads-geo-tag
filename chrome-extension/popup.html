@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小黃標-Threads 用戶所在地自動標籤</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo-section">
+        <span class="logo-icon">🏷️</span>
+        <h1>小黃標</h1>
+        <span class="version">v1.0</span>
+      </div>
+    </header>
+
+    <div id="statusBar" class="status-bar">就緒</div>
+
+    <section class="stats-section">
+      <div class="stat-card">
+        <div class="stat-icon">📍</div>
+        <div class="stat-info">
+          <span class="stat-label">已儲存地區</span>
+          <span id="cacheCount" class="stat-value">0</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">👤</div>
+        <div class="stat-info">
+          <span class="stat-label">已分析側寫</span>
+          <span id="profileCacheCount" class="stat-value">0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2 class="section-title">⚙️ 設定</h2>
+
+      <div class="setting-item">
+        <label class="toggle-container">
+          <input type="checkbox" id="autoQueryVisibleCheckbox">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">自動查詢</span>
+        </label>
+        <p class="setting-desc">自動開啟分頁進行查詢</p>
+      </div>
+
+      <div class="setting-item sub-setting" id="maxConcurrentContainer" style="display: none;">
+        <label for="maxConcurrentInput">同時查詢數量：</label>
+        <input type="number" id="maxConcurrentInput" min="1" max="10" value="3">
+      </div>
+
+      <div class="setting-item">
+        <label class="toggle-container">
+          <input type="checkbox" id="keepTabCheckbox">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">保留結果分頁</span>
+        </label>
+        <p class="setting-desc">查詢後保留分頁以查看詳情</p>
+      </div>
+
+      <div class="setting-item sub-setting" id="keepTabFilterContainer" style="display: none;">
+        <label for="keepTabFilterInput">僅保留結果不符合：</label>
+        <input type="text" id="keepTabFilterInput" value="Taiwan" placeholder="輸入過濾條件">
+      </div>
+
+      <div class="setting-item">
+        <label class="toggle-container">
+          <input type="checkbox" id="llmProfileAnalysisCheckbox">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">社群行為分析</span>
+        </label>
+        <p class="setting-desc">AI 分析用戶行為風格 (需 API Key)</p>
+      </div>
+
+      <div class="api-key-section" id="apiKeySection" style="display: none;">
+        <div class="api-key-row">
+          <label for="openaiApiKeyInput">OpenAI API Key：</label>
+          <span id="apiKeySetIndicator" style="display: none;">
+            <span class="api-key-set-badge">✓ 已設定</span>
+            <button type="button" id="editApiKeyBtn" class="text-btn">[編輯]</button>
+          </span>
+          <span id="apiKeyInputContainer">
+            <input type="password" id="openaiApiKeyInput" placeholder="sk-...">
+            <button type="button" id="clearApiKeyBtn" class="text-btn">[清除]</button>
+          </span>
+        </div>
+        <span id="apiKeyStatus" class="api-key-status"></span>
+      </div>
+    </section>
+
+    <section class="actions-section">
+      <div class="action-group">
+        <h3>地區快取</h3>
+        <div class="action-buttons">
+          <button id="showCacheBtn" class="btn btn-secondary">顯示</button>
+          <button id="clearCacheBtn" class="btn btn-danger">清除</button>
+        </div>
+      </div>
+      <div class="action-group">
+        <h3>側寫快取</h3>
+        <div class="action-buttons">
+          <button id="showProfileCacheBtn" class="btn btn-secondary">顯示</button>
+          <button id="clearProfileCacheBtn" class="btn btn-danger">清除</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="output-section" id="outputSection" style="display: none;">
+      <label for="contentOutput">查詢結果:</label>
+      <textarea id="contentOutput" rows="6" readonly placeholder="查詢結果將顯示在這裡..."></textarea>
+    </div>
+
+    <footer class="footer">
+      <p>在 Threads 頁面瀏覽時，用戶名稱旁會自動顯示標籤</p>
+    </footer>
+  </div>
+
+  <script src="llmAnalyzer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

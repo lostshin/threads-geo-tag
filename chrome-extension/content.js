@@ -551,7 +551,7 @@ async function autoClickAboutProfileAndGetRegion() {
     const moreSvgs = document.querySelectorAll('svg[aria-label="More"]');
 
     if (!moreSvgs || moreSvgs.length < 4) {
-      console.log('[Threads] 找不到第四個 "More" 按鈕的 SVG，目前找到:', moreSvgs?.length || 0);
+      console.log('[Threads] 找不到第四個 "More" 按鈕的 SVG，目前找到:', (moreSvgs && moreSvgs.length) || 0);
       return null;
     }
 
@@ -570,7 +570,7 @@ async function autoClickAboutProfileAndGetRegion() {
     console.log('[Threads] 找到 "More" 按鈕:', moreButton);
 
     // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
-    const randomDelay1 = Math.random() * 2000 + 1000; 
+    const randomDelay1 = Math.random() * 2000 + 1000;
     console.log(`[Threads] 等待 ${Math.round(randomDelay1)}ms 後點擊 "More" 按鈕`);
     await waitForMilliseconds(randomDelay1);
 
@@ -580,7 +580,7 @@ async function autoClickAboutProfileAndGetRegion() {
 
     // 等待選單出現
     console.log('[Threads] 等待選單出現');
-    await waitForMilliseconds(1000);
+    await waitForMilliseconds(1500);
 
     // 步驟 2: 找到並點擊 "About this profile" 按鈕
     console.log('[Threads] 步驟 2: 尋找 "About this profile" 按鈕');
@@ -605,7 +605,7 @@ async function autoClickAboutProfileAndGetRegion() {
     console.log('[Threads] 找到 "About this profile" 按鈕:', aboutButton);
 
     // 隨機等待 1-3 秒後再點擊，避免被當成自動化程式
-    const randomDelay2 = Math.random() * 2000 + 1000; 
+    const randomDelay2 = Math.random() * 2000 + 1000;
     console.log(`[Threads] 等待 ${Math.round(randomDelay2)}ms 後點擊 "About this profile" 按鈕`);
     await waitForMilliseconds(randomDelay2);
 
@@ -613,31 +613,53 @@ async function autoClickAboutProfileAndGetRegion() {
     console.log('[Threads] 步驟 3: 點擊 "About this profile" 按鈕');
     aboutButton.click();
 
-    // 步驟 3: 等待 popup 出現
-    console.log('[Threads] 步驟 4: 等待 popup 出現');
-    await waitForMilliseconds(1500); // 等待 popup 動畫完成
+    // 步驟 3: 使用重試機制等待 "Based in" 出現
+    console.log('[Threads] 步驟 4: 等待 popup 載入並尋找 "Based in" 資訊');
 
-    // 步驟 4: 找到 "Based in" 的 <span>
-    console.log('[Threads] 步驟 5: 尋找 "Based in" 資訊');
-    const basedInSpan = findSpanWithText('Based in');
+    let basedInSpan = null;
+    let region = null;
+    const maxRetries = 6;
+    const retryDelay = 1000;
 
-    if (!basedInSpan) {
-      console.log('[Threads] 找不到 "Based in" 文字');
-      return null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      console.log(`[Threads] 嘗試 ${attempt}/${maxRetries}: 等待 ${retryDelay}ms 後搜尋 "Based in"`);
+      await waitForMilliseconds(retryDelay);
+
+      // 嘗試多種方式尋找 "Based in"
+      basedInSpan = findSpanWithText('Based in');
+
+      if (basedInSpan) {
+        console.log('[Threads] 找到 "Based in" span:', basedInSpan);
+        region = getNextSpanText(basedInSpan);
+
+        if (region) {
+          console.log('[Threads] 步驟 5: 成功取得地區:', region);
+          return region;
+        } else {
+          console.log('[Threads] 找到 "Based in" 但無法取得下一個 span 的文字');
+        }
+      } else {
+        // 嘗試搜尋包含 "Based in" 的元素（部分匹配）
+        const allSpans = document.querySelectorAll('span');
+        for (const span of allSpans) {
+          const text = (span.textContent || '').trim();
+          if (text.includes('Based in')) {
+            console.log('[Threads] 找到包含 "Based in" 的 span:', text);
+            // 嘗試從文字中直接提取地區
+            const match = text.match(/Based in\s*(.+)/i);
+            if (match && match[1]) {
+              region = match[1].trim();
+              console.log('[Threads] 從文字中提取地區:', region);
+              return region;
+            }
+          }
+        }
+        console.log(`[Threads] 嘗試 ${attempt}: 未找到 "Based in" 文字`);
+      }
     }
 
-    console.log('[Threads] 找到 "Based in" span:', basedInSpan);
-
-    // 步驟 5: 取得下一個兄弟 <span> 的文字（就是地區）
-    const region = getNextSpanText(basedInSpan);
-
-    if (!region) {
-      console.log('[Threads] 找不到地區資訊');
-      return null;
-    }
-
-    console.log('[Threads] 步驟 6: 成功取得地區:', region);
-    return region;
+    console.log('[Threads] 重試完畢仍找不到地區資訊');
+    return null;
 
   } catch (error) {
     console.log('[Threads] autoClickAboutProfileAndGetRegion 錯誤:', error);
@@ -656,7 +678,7 @@ function findSpanWithText(text) {
   for (const span of allSpans) {
     // 使用 textContent 或 innerText 進行比對
     const spanText = (span.textContent || span.innerText || '').trim();
-    
+
     if (spanText === text) {
       return span;
     }
@@ -787,10 +809,10 @@ function getRegionColor(region, profile = null) {
     const colonIndex = trimmed.indexOf(':') !== -1 ? trimmed.indexOf(':') : trimmed.indexOf('：');
     return colonIndex > 0 ? trimmed.substring(0, colonIndex).trim() : trimmed;
   }) : [];
-  const hasRedFlagProfileTag = profileTags.some(tag => 
+  const hasRedFlagProfileTag = profileTags.some(tag =>
     RED_FLAG_PROFILE_TAGS.includes(tag)
   );
-  const hasGrayFlagProfileTag = profileTags.some(tag => 
+  const hasGrayFlagProfileTag = profileTags.some(tag =>
     GRAY_FLAG_PROFILE_TAGS.includes(tag)
   );
 
@@ -873,7 +895,7 @@ function createClickableTagsElement(tagsWithReasons) {
     tagSpan.className = 'threads-clickable-tag';
     tagSpan.textContent = item.tag;
     tagSpan.dataset.reason = item.reason;
-    
+
     // 基本樣式 - 恢復 pointer-events 讓標籤可點擊
     tagSpan.style.cssText = `
       cursor: ${item.reason ? 'pointer' : 'default'};
@@ -887,7 +909,7 @@ function createClickableTagsElement(tagsWithReasons) {
       tagSpan.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
-        
+
         // 檢查是否已有 tooltip（現在 tooltip 在 body 中）
         if (tagSpan._currentTooltip && document.body.contains(tagSpan._currentTooltip)) {
           tagSpan._currentTooltip.remove();
@@ -902,10 +924,10 @@ function createClickableTagsElement(tagsWithReasons) {
         const tooltip = document.createElement('div');
         tooltip.className = 'threads-tag-tooltip';
         tooltip.textContent = item.reason;
-        
+
         // 取得標籤的位置
         const rect = tagSpan.getBoundingClientRect();
-        
+
         tooltip.style.cssText = `
           position: fixed;
           top: ${rect.bottom + 8}px;
@@ -1032,10 +1054,10 @@ function generateLabelElement(region, profile) {
     if (tagsWithReasons.length > 0) {
       const openParen = document.createTextNode(' (');
       container.appendChild(openParen);
-      
+
       const clickableTags = createClickableTagsElement(tagsWithReasons);
       container.appendChild(clickableTags);
-      
+
       const closeParen = document.createTextNode(')');
       container.appendChild(closeParen);
     }
@@ -1070,7 +1092,7 @@ function showRegionLabelsOnPage(regionData) {
       let region = null;
       let profile = null;
       const accountData = regionData[account];
-      
+
       if (accountData) {
         if (typeof accountData === 'object' && accountData !== null) {
           // 新格式: { region: "Taiwan", profile: "標籤" }
@@ -1096,12 +1118,12 @@ function showRegionLabelsOnPage(regionData) {
         if (labelTextSpan === existingLabel) {
           // 舊版標籤（沒有 span），需要重建
           existingLabel.innerHTML = '';
-          
+
           // 重建時加入三角形
           const colors = getRegionColor(region, profile);
           existingLabel.style.position = 'relative';
           existingLabel.style.marginLeft = '12px';
-          
+
           const arrow = document.createElement('span');
           arrow.style.cssText = `
             position: absolute;
@@ -1115,7 +1137,7 @@ function showRegionLabelsOnPage(regionData) {
             border-right: 6px solid ${colors.backgroundColor};
           `;
           existingLabel.appendChild(arrow);
-          
+
           // 使用可點擊的標籤元素
           const labelElement = generateLabelElement(region, profile);
           existingLabel.appendChild(labelElement);
@@ -1339,7 +1361,7 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
       if (response && response.success && response.region) {
         // 查詢成功且有地區資訊，根據地區設置對應顏色
         const colors = getRegionColor(response.region);
-        
+
         // 查詢 sidepanel 是否已有該用戶的側寫結果
         let profileText = '';
         try {
@@ -1354,7 +1376,7 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
         } catch (err) {
           console.log('[Threads] 查詢側寫結果失敗:', err.message);
         }
-        
+
         // 更新標籤文字（包含側寫如果有的話）
         labelTextSpan.textContent = generateLabelText(response.region, profileText || null);
         labelElement.style.backgroundColor = colors.backgroundColor;
@@ -1429,7 +1451,7 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
     } catch (error) {
       // 發生錯誤，設置為未揭露
       console.log('[Threads] 查詢錯誤:', error);
-      
+
       // 查詢 sidepanel 是否已有該用戶的側寫結果
       let profileText = '';
       try {
@@ -1901,16 +1923,16 @@ async function autoQueryVisibleUsers() {
  */
 function handlePageScroll(skipThrottle = false) {
   const now = Date.now();
-  
+
   // 檢查是否距離上次更新已經過了 2 秒（除非跳過節流）
   if (!skipThrottle && ( ( now - lastScrollUpdate) < SCROLL_THROTTLE_DELAY ) ) {
     console.log('[Threads] 捲動事件被節流機制忽略（距離上次更新不足 2 秒）');
     return;
   }
-  
+
   // 更新最後一次捲動時間
   lastScrollUpdate = now;
-  
+
   console.log('[Threads] 頁面捲動，通知 sidepanel 更新用戶列表');
 
   // 發送消息到 sidepanel
@@ -1985,10 +2007,10 @@ function findProfilePageFollowerElement() {
     }
 
     // 3️⃣ tablist 的 parent
-    const parentDiv = tablist?.parentElement;
+    const parentDiv = tablist && tablist.parentElement;
 
     // 4️⃣ parent 的下一個 sibling
-    const result = parentDiv?.nextElementSibling;
+    const result = parentDiv && parentDiv.nextElementSibling;
 
     // ✅ 找到第一個有效的就回傳
     if (result) {
@@ -2056,7 +2078,7 @@ let lastUrl = window.location.href;
 
 function handleUrlChange() {
   const currentUrl = window.location.href;
-  
+
   if (currentUrl === lastUrl) {
     return;
   }
@@ -2169,13 +2191,13 @@ function extractTextFromDocument() {
   while (walker.nextNode()) {
     const node = walker.currentNode;
     const parent = node.parentElement;
-    const grandparent = parent?.parentElement;
-    
+    const grandparent = parent && parent.parentElement;
+
     let text = node.textContent.trim();
 
     texts.push(text);
   }
 
-  
+
   return texts.join('\n');
 }

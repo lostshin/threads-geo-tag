@@ -88,7 +88,7 @@ async function checkLLMAvailability() {
 async function callOpenAI(systemPrompt, userPrompt) {
   try {
     const apiKey = await getOpenAIApiKey();
-    
+
     if (!apiKey) {
       throw new Error('OpenAI API Key 未設定，請在進階功能中設定');
     }
@@ -111,13 +111,14 @@ async function callOpenAI(systemPrompt, userPrompt) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(`OpenAI API 錯誤: ${response.status} - ${errorData.error?.message || response.statusText}`);
+      var errorMessage = (errorData.error && errorData.error.message) || response.statusText;
+      throw new Error('OpenAI API 錯誤: ' + response.status + ' - ' + errorMessage);
     }
 
     const data = await response.json();
     //console.log('[OpenAI] API 回應:', JSON.stringify(data, null, 2));
-    
-    const content = data.choices?.[0]?.message?.content;
+
+    var content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
 
     if (!content) {
       console.error('[OpenAI] 回應中沒有 content，完整回應:', data);
@@ -193,22 +194,22 @@ async function analyzeUserProfile(socialPostContent, socialReplyContent, onProgr
 
    const userPromptLocalLLm="不要使用『人身攻擊、仇恨言論、統戰言論』標籤。只需要輸出標籤的結果，每個標籤間用逗號分隔。例如：「生活帳,情緒宣洩」。只能用繁體中文，每個標籤2-5個字.";
 
-    const userPromptFinal = '請參考以下所提供的' + socialPostTypeString + 
-      ', 依內容數量排序, 提供五個最貼切描述該用戶社群帳號展現出的風格的標籤 (舉例但不限這些: '+TAG_SAMPLE+'..). '+ ( useLocalLLM ? userPromptLocalLLm : userPromptAPILLm) + '\n\n\n' + 
+    const userPromptFinal = '請參考以下所提供的' + socialPostTypeString +
+      ', 依內容數量排序, 提供五個最貼切描述該用戶社群帳號展現出的風格的標籤 (舉例但不限這些: '+TAG_SAMPLE+'..). '+ ( useLocalLLM ? userPromptLocalLLm : userPromptAPILLm) + '\n\n\n' +
       socialContent;
-      
+
     // 印出完整 Prompt
     // console.log(`[LLM] 完整 Prompt:\n=== System ===\n${LLM_SYSTEM_PROMPT}\n=== User ===\n${userPromptFinal}`);
 
     let fullResponse = '';
 
 
-    
+
     if (useLocalLLM) {
       // ==================== 使用本地 LLM ====================
       // 先檢查可用性
       const availabilityResult = await checkLLMAvailability();
-      
+
       if (!availabilityResult.available) {
         throw new Error(availabilityResult.error);
       }
@@ -229,7 +230,7 @@ async function analyzeUserProfile(socialPostContent, socialReplyContent, onProgr
           monitor.addEventListener('downloadprogress', (e) => {
             const progress = Math.round(e.loaded * 100);
             console.log(`[LLM] Download progress: ${progress}%`);
-            
+
             // 如果有提供進度回調，則調用
             if (onProgress && typeof onProgress === 'function') {
               onProgress(progress);
@@ -251,11 +252,11 @@ async function analyzeUserProfile(socialPostContent, socialReplyContent, onProgr
       // ==================== 使用 OpenAI API ====================
       console.log('[OpenAI] Calling OpenAI API...');
       const openAIResult = await callOpenAI(LLM_SYSTEM_PROMPT, userPromptFinal);
-      
+
       if (!openAIResult.success) {
         throw new Error(openAIResult.error);
       }
-      
+
       fullResponse = openAIResult.content;
     }
 
@@ -295,7 +296,7 @@ async function analyzeUserProfile(socialPostContent, socialReplyContent, onProgr
         } else if (jsonStr.startsWith('```')) {
           jsonStr = jsonStr.replace(/^```\s*/, '').replace(/\s*```$/, '');
         }
-        
+
         const parsed = JSON.parse(jsonStr);
         if (parsed.tags && Array.isArray(parsed.tags)) {
           tagEntries = parsed.tags
@@ -345,8 +346,8 @@ async function analyzeUserProfile(socialPostContent, socialReplyContent, onProgr
   }
 }
 
-// ==================== 導出 ====================
-export {
-  checkLLMAvailability,
-  analyzeUserProfile
-};
+// ==================== 導出為全域函數（供 sidepanel 和 popup 使用）====================
+if (typeof window !== 'undefined') {
+  window.checkLLMAvailability = checkLLMAvailability;
+  window.analyzeUserProfile = analyzeUserProfile;
+}

@@ -390,7 +390,7 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
     const randomDelay = Math.random() * 2000 + 3000; // 1000-3000ms
     console.log(`[Threads] 等待 ${Math.round(randomDelay / 1000)} 秒後查詢下一個用戶`);
     await new Promise(resolve => setTimeout(resolve, randomDelay));
-    
+
     // 開啟新分頁到用戶的 Threads 個人資料頁面
     const profileUrl = `https://www.threads.com/@${cleanUsername}?hl=en`;
 
@@ -401,9 +401,9 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       if (allWindows.length > 1) {
         // 有多個視窗時，尋找有 threads.com 分頁的視窗
         for (const win of allWindows) {
-          const hasThreadsTab = win.tabs?.some(tab => 
-            tab.url && tab.url.includes('threads.com')
-          );
+          const hasThreadsTab = win.tabs && win.tabs.some(function(tab) {
+            return tab.url && tab.url.includes('threads.com');
+          });
           if (hasThreadsTab) {
             targetWindowId = win.id;
             console.log(`[QueryManager] 找到有 threads.com 的視窗: ${targetWindowId}`);
@@ -420,7 +420,7 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       url: profileUrl,
       active: false // 在背景開啟，不切換過去
     };
-    
+
     // 如果找到目標視窗，指定在該視窗開啟
     if (targetWindowId !== null) {
       createOptions.windowId = targetWindowId;
@@ -481,16 +481,16 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
     // 返回結果
     if (response && response.success) {
       const region = response.region;
-      
+
       // 根據設定決定是否關閉新分頁
       // 如果 shouldKeepTab 為 true，且有過濾條件，則只有當結果不包含過濾條件時才保留
       let shouldCloseTab = !shouldKeepTab;
-      
+
       if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
         // 檢查結果是否包含過濾條件（不區分大小寫）
         const regionLower = region.toLowerCase();
         const filterLower = keepTabFilter.trim().toLowerCase();
-        
+
         if (regionLower.includes(filterLower)) {
           // 結果包含過濾條件，關閉分頁
           shouldCloseTab = true;
@@ -501,7 +501,7 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
           console.log(`[QueryManager] 結果 "${region}" 不包含 "${keepTabFilter}"，保留分頁`);
         }
       }
-      
+
       if (shouldCloseTab && newTab) {
         try {
           await chrome.tabs.remove(newTab.id);
@@ -524,13 +524,13 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       // 查詢失敗，根據過濾條件決定是否關閉分頁
       // 失敗視為「結果不符合過濾條件」，如果有設定過濾條件則保留分頁
       let shouldCloseTab = !shouldKeepTab;
-      
+
       if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
         // 有過濾條件時，失敗視為不符合，保留分頁
         shouldCloseTab = false;
         console.log(`[QueryManager] 查詢失敗，視為不符合 "${keepTabFilter}"，保留分頁`);
       }
-      
+
       if (shouldCloseTab && newTab) {
         try {
           await chrome.tabs.remove(newTab.id);
@@ -541,19 +541,19 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       }
       return {
         success: false,
-        error: response?.error || '未知錯誤'
+        error: (response && response.error) || '未知錯誤'
       };
     }
   } catch (error) {
     // 如果發生錯誤，根據過濾條件決定是否關閉分頁
     let shouldCloseTab = !shouldKeepTab;
-    
+
     if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
       // 有過濾條件時，錯誤視為不符合，保留分頁
       shouldCloseTab = false;
       console.log(`[QueryManager] 查詢錯誤，視為不符合 "${keepTabFilter}"，保留分頁`);
     }
-    
+
     if (shouldCloseTab && newTab) {
       try {
         await chrome.tabs.remove(newTab.id);
@@ -601,9 +601,9 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
       const allWindows = await chrome.windows.getAll({ populate: true });
       if (allWindows.length > 1) {
         for (const win of allWindows) {
-          const hasThreadsTab = win.tabs?.some(tab => 
-            tab.url && tab.url.includes('threads.com')
-          );
+          const hasThreadsTab = win.tabs && win.tabs.some(function(tab) {
+            return tab.url && tab.url.includes('threads.com');
+          });
           if (hasThreadsTab) {
             targetWindowId = win.id;
             break;
@@ -810,11 +810,11 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
 
       // 根據設定決定是否關閉分頁
       let shouldCloseTab = !shouldKeepTab;
-      
+
       if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
         const regionLower = region.toLowerCase();
         const filterLower = keepTabFilter.trim().toLowerCase();
-        
+
         if (regionLower.includes(filterLower)) {
           shouldCloseTab = true;
           console.log(`[QueryManager] 結果 "${region}" 包含 "${keepTabFilter}"，關閉分頁`);
@@ -846,7 +846,7 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
     } else {
       // 查詢失敗
       let shouldCloseTab = !shouldKeepTab;
-      
+
       if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
         shouldCloseTab = false;
         console.log(`[QueryManager] 查詢失敗，視為不符合 "${keepTabFilter}"，保留分頁`);
@@ -862,14 +862,14 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
 
       return {
         success: false,
-        error: response?.error || '未知錯誤'
+        error: (response && response.error) || '未知錯誤'
       };
     }
 
   } catch (error) {
     // 清理分頁
     let shouldCloseTab = !shouldKeepTab;
-    
+
     if (shouldKeepTab && keepTabFilter && keepTabFilter.trim() !== '') {
       shouldCloseTab = false;
     }
@@ -1069,7 +1069,7 @@ async function queryUserRegion(username, shouldKeepTab = null, forceRefresh = fa
   // 沒有快取或強制刷新，加入隊列執行查詢
   console.log(`[QueryManager] 查詢參數: shouldKeepTab=${shouldKeepTab}, keepTabFilter="${keepTabFilter}"`);
   const queueResult = addToQueryQueue(cleanUsername, shouldKeepTab, keepTabFilter);
-  
+
   // 如果無法加入隊列（隊列已滿或已存在），返回失敗
   if (queueResult === null) {
     return {
@@ -1078,7 +1078,7 @@ async function queryUserRegion(username, shouldKeepTab = null, forceRefresh = fa
       fromCache: null
     };
   }
-  
+
   return queueResult;
 }
 
@@ -1103,30 +1103,30 @@ function updateMaxConcurrent(value) {
   const newValue = Math.max(1, Math.min(10, parseInt(value, 10) || 3));
   console.log(`[QueryManager] 更新最大並行查詢數: ${queueJobMax} -> ${newValue}`);
   queueJobMax = newValue;
-  
+
   // 如果有待處理的任務，嘗試立即處理更多任務
   if (queryQueue.length > 0 && activeQueryCount < queueJobMax) {
     processQueryQueue();
   }
 }
 
-// ==================== 導出 ====================
-export {
-  queryUserRegion,
-  getQueueStatus,
-  getCachedRegion,
-  getAllCachedRegions,
-  saveCachedRegion,
-  clearCache,
-  removeUserCache,
-  getCacheStats,
-  updateMaxConcurrent,
-  executeIntegratedQuery,
-  addToIntegratedQueryQueue,
-  getCachedProfile,
-  saveCachedProfile,
-  getAllCachedProfiles,
-  clearProfileCache,
-  getProfileCacheStats,
-  removeUserProfileCache
+// ==================== 導出為全域命名空間（供 Service Worker 使用）====================
+var QueryManager = {
+  queryUserRegion: queryUserRegion,
+  getQueueStatus: getQueueStatus,
+  getCachedRegion: getCachedRegion,
+  getAllCachedRegions: getAllCachedRegions,
+  saveCachedRegion: saveCachedRegion,
+  clearCache: clearCache,
+  removeUserCache: removeUserCache,
+  getCacheStats: getCacheStats,
+  updateMaxConcurrent: updateMaxConcurrent,
+  executeIntegratedQuery: executeIntegratedQuery,
+  addToIntegratedQueryQueue: addToIntegratedQueryQueue,
+  getCachedProfile: getCachedProfile,
+  saveCachedProfile: saveCachedProfile,
+  getAllCachedProfiles: getAllCachedProfiles,
+  clearProfileCache: clearProfileCache,
+  getProfileCacheStats: getProfileCacheStats,
+  removeUserProfileCache: removeUserProfileCache
 };

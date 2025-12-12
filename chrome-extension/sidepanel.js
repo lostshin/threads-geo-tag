@@ -334,7 +334,7 @@ async function showRegionLabels()
       //updateStatus(`成功顯示標籤 ${response.addedCount}/${response.totalCount}`, 'success');
       contentOutput.value = `已在頁面上顯示用戶資訊標籤\n成功: ${response.addedCount}/${response.totalCount}\n\n提示：\n- 黃色標籤 = 待查詢\n- 綠色標籤 = 已查詢`;
     } else {
-      updateStatus(`顯示標籤失敗: ${response?.error || '未知錯誤'}`, 'error');
+      updateStatus(`顯示標籤失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
   } catch (error) {
     updateStatus(`錯誤: ${error.message}`, 'error');
@@ -365,7 +365,7 @@ hideLabelsBtn.addEventListener('click', async () => {
       updateStatus(`已隱藏 ${response.hiddenCount} 個標籤`, 'success');
       contentOutput.value = `已隱藏頁面上的用戶資訊標籤\n隱藏數量: ${response.hiddenCount}`;
     } else {
-      updateStatus(`隱藏標籤失敗: ${response?.error || '未知錯誤'}`, 'error');
+      updateStatus(`隱藏標籤失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
   } catch (error) {
     updateStatus(`錯誤: ${error.message}`, 'error');
@@ -478,7 +478,7 @@ async function updateLinkList()
         }
       }
     } else {
-      contentOutput.value = `查詢失敗: ${response?.error || '未知錯誤'}`;
+      contentOutput.value = `查詢失敗: ${(response && response.error) || '未知錯誤'}`;
       updateStatus('查詢失敗', 'error');
     }
   } catch (error) {
@@ -552,7 +552,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // 在 currentGetUserListArray 中找到對應的用戶
     const user = currentGetUserListArray.find(u => u.account === account);
-    
+
     if (user && user.profile) {
       console.log(`[Sidepanel] 找到用戶 ${account} 的側寫: ${user.profile}`);
       sendResponse({ success: true, profile: user.profile });
@@ -589,7 +589,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 處理側寫分析（從 background.js 的整合查詢觸發）
   if (request.action === 'processProfileAnalysis') {
     const { account, profileData } = request;
-    
+
     console.log(`[Sidepanel] 收到側寫分析請求: ${account}`);
 
     // 異步執行 LLM 分析（不阻塞地點查詢）
@@ -600,7 +600,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // 如果是快取結果，直接使用
         if (profileData.fromCache && profileData.profile) {
           console.log(`[Sidepanel] 使用側寫快取 ${account}: ${profileData.profile}`);
-          
+
           // 更新 currentGetUserListArray
           currentGetUserListArray.forEach((user, index) => {
             if (user.account === account) {
@@ -618,7 +618,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (profileData.needAnalysis) {
           console.log(`[Sidepanel] 開始 LLM 分析 ${account}`);
           updateStatus(`正在分析 ${account} 的用戶側寫...`, 'info');
-          
+
           if (typeof window.analyzeUserProfile !== 'function') {
             console.error('[Sidepanel] analyzeUserProfile 函數未載入');
             updateStatus('側寫分析失敗: LLM 函數未載入', 'error');
@@ -658,8 +658,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             await showRegionLabels();
             updateStatus(`側寫分析完成: ${account}`, 'success');
           } else {
-            console.log(`[Sidepanel] LLM 分析失敗: ${analysisResult?.error}`);
-            updateStatus(`側寫分析失敗: ${analysisResult?.error || '未知錯誤'}`, 'error');
+            console.log(`[Sidepanel] LLM 分析失敗: ${analysisResult && analysisResult.error}`);
+            updateStatus(`側寫分析失敗: ${(analysisResult && analysisResult.error) || '未知錯誤'}`, 'error');
           }
         }
       } catch (error) {
@@ -740,17 +740,17 @@ autoQueryVisibleCheckbox.addEventListener('change', () => {
 // 監聽 maxConcurrentInput 變化，保存到 chrome.storage 並通知 background 更新 queryManager
 maxConcurrentInput.addEventListener('change', async () => {
   let value = parseInt(maxConcurrentInput.value, 10);
-  
+
   // 限制範圍 1-10
   if (isNaN(value) || value < 1) value = 1;
   if (value > 10) value = 10;
   maxConcurrentInput.value = value;
-  
+
   // 保存到 storage
   chrome.storage.local.set({ maxConcurrentQueries: value }, () => {
     console.log('[Sidepanel] 保存最大並行查詢數設定:', value);
   });
-  
+
   // 通知 background.js 更新 queryManager 的設定
   try {
     await chrome.runtime.sendMessage({
@@ -766,19 +766,19 @@ maxConcurrentInput.addEventListener('change', async () => {
 // 更新 LLM Provider UI 顯示狀態
 function updateLLMProviderUI() {
   const isChecked = llmProfileAnalysisCheckbox.checked;
-  
+
   if (!isChecked) {
     // 未啟用分析功能：隱藏整個 provider 選擇區域
     llmProviderSection.style.display = 'none';
     return;
   }
-  
+
   // 啟用分析功能：顯示 provider 選擇區域
   llmProviderSection.style.display = 'block';
-  
+
   // 根據選擇的 provider 顯示對應的配置面板
   const useLocalLLM = llmProviderSelect.value === 'local';
-  
+
   if (useLocalLLM) {
     openaiConfigPanel.style.display = 'none';
     localLLMConfigPanel.style.display = 'block';
@@ -794,14 +794,14 @@ function updateLLMProviderUI() {
 async function checkLocalLLMAvailability() {
   localLLMStatus.className = 'local-llm-status checking';
   localLLMStatus.textContent = '檢查中...';
-  
+
   try {
     if (typeof window.checkLLMAvailability !== 'function') {
       throw new Error('LLM 檢查函數未載入');
     }
-    
+
     const result = await window.checkLLMAvailability();
-    
+
     if (result.available) {
       localLLMStatus.className = 'local-llm-status available';
       if (result.status === 'downloading') {
@@ -890,7 +890,7 @@ chrome.storage.local.get(['openaiApiKey', 'useLocalLLM'], (result) => {
   } else {
     updateApiKeyDisplayState(false);
   }
-  
+
   // 設定 LLM Provider 選擇
   if (result.useLocalLLM === true) {
     llmProviderSelect.value = 'local';
@@ -899,7 +899,7 @@ chrome.storage.local.get(['openaiApiKey', 'useLocalLLM'], (result) => {
     llmProviderSelect.value = 'openai';
     console.log('[Sidepanel] 載入 LLM Provider 設定: OpenAI API');
   }
-  
+
   // 初始化後更新顯示狀態
   updateLLMProviderUI();
 });
@@ -908,12 +908,12 @@ chrome.storage.local.get(['openaiApiKey', 'useLocalLLM'], (result) => {
 let apiKeySaveTimeout = null;
 openaiApiKeyInput.addEventListener('input', () => {
   const apiKey = openaiApiKeyInput.value.trim();
-  
+
   // 清除之前的延遲儲存
   if (apiKeySaveTimeout) {
     clearTimeout(apiKeySaveTimeout);
   }
-  
+
   // 延遲 500ms 後自動儲存
   apiKeySaveTimeout = setTimeout(() => {
     if (!apiKey) {
@@ -921,19 +921,19 @@ openaiApiKeyInput.addEventListener('input', () => {
       apiKeyStatus.className = 'api-key-status';
       return;
     }
-    
+
     // 簡單驗證 API Key 格式
     if (!apiKey.startsWith('sk-')) {
       apiKeyStatus.textContent = '格式不正確';
       apiKeyStatus.className = 'api-key-status error';
       return;
     }
-    
+
     chrome.storage.local.set({ openaiApiKey: apiKey }, () => {
       console.log('[Sidepanel] 自動儲存 OpenAI API Key');
       apiKeyStatus.textContent = '✓ 已儲存';
       apiKeyStatus.className = 'api-key-status saved';
-      
+
       // 2 秒後清除狀態訊息並切換到已設定狀態
       setTimeout(() => {
         apiKeyStatus.textContent = '';
@@ -963,7 +963,7 @@ showCacheBtn.addEventListener('click', async () => {
     if (response && response.success) {
       const cache = response.cache || {};
       const entries = Object.entries(cache);
-      
+
       if (entries.length === 0) {
         contentOutput.value = '本機沒有儲存任何用戶所在地資料';
         updateStatus('本機資料為空', 'info');
@@ -973,13 +973,13 @@ showCacheBtn.addEventListener('click', async () => {
           const region = data.region || '未知';
           return `${account}: ${region}`;
         }).join('\n');
-        
+
         contentOutput.value = `本機儲存的用戶所在地資料 (共 ${entries.length} 筆):\n\n${output}`;
         updateStatus(`已載入 ${entries.length} 筆本機資料`, 'success');
       }
     } else {
-      contentOutput.value = `讀取失敗: ${response?.error || '未知錯誤'}`;
-      updateStatus(`讀取失敗: ${response?.error || '未知錯誤'}`, 'error');
+      contentOutput.value = `讀取失敗: ${(response && response.error) || '未知錯誤'}`;
+      updateStatus(`讀取失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
 
     // 恢復按鈕狀態
@@ -1040,7 +1040,7 @@ clearCacheBtn.addEventListener('click', async () => {
 
       console.log('[Sidepanel] 快取已清除，用戶列表已重置');
     } else {
-      updateStatus(`清除失敗: ${response?.error || '未知錯誤'}`, 'error');
+      updateStatus(`清除失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
 
     // 恢復按鈕狀態
@@ -1077,7 +1077,7 @@ showProfileCacheBtn.addEventListener('click', async () => {
     if (response && response.success) {
       const cache = response.cache || {};
       const entries = Object.entries(cache);
-      
+
       if (entries.length === 0) {
         contentOutput.value = '本機沒有儲存任何用戶側寫資料';
         updateStatus('側寫資料為空', 'info');
@@ -1087,13 +1087,13 @@ showProfileCacheBtn.addEventListener('click', async () => {
           const profile = data.profile || '未知';
           return `${account}: ${profile}`;
         }).join('\n');
-        
+
         contentOutput.value = `本機儲存的用戶側寫資料 (共 ${entries.length} 筆):\n\n${output}`;
         updateStatus(`已載入 ${entries.length} 筆側寫資料`, 'success');
       }
     } else {
-      contentOutput.value = `讀取失敗: ${response?.error || '未知錯誤'}`;
-      updateStatus(`讀取失敗: ${response?.error || '未知錯誤'}`, 'error');
+      contentOutput.value = `讀取失敗: ${(response && response.error) || '未知錯誤'}`;
+      updateStatus(`讀取失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
 
     // 恢復按鈕狀態
@@ -1149,7 +1149,7 @@ clearProfileCacheBtn.addEventListener('click', async () => {
 
       console.log('[Sidepanel] 側寫快取已清除，用戶列表已重置');
     } else {
-      updateStatus(`清除失敗: ${response?.error || '未知錯誤'}`, 'error');
+      updateStatus(`清除失敗: ${(response && response.error) || '未知錯誤'}`, 'error');
     }
 
     // 恢復按鈕狀態

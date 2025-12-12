@@ -1,10 +1,9 @@
 {
   "manifest_version": 3,
   "name": "小黃標-Threads User Profile Tag",
-  "version": "0.9.5",
+  "version": "1.0.0",
   "description": "將 Threads 用戶所在地等資訊，自動顯示在小黃標籤上。 Automatically extracts and reveals profile for quick identification.",
   "permissions": [
-    "sidePanel",
     "activeTab",
     "tabs",
     "storage"
@@ -13,8 +12,7 @@
    "*://www.threads.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "web_accessible_resources": [
     {
@@ -30,13 +28,11 @@
   ],
   "action": {
     "default_title": "Threads User Location Tag",
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
     }
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
   },
   "icons": {
     "16": "icons/icon16.png",
