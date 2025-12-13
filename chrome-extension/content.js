@@ -42,7 +42,210 @@
  */
 let currentUserElementsData = [];
 
-// 监听来自 sidepanel 的消息
+// ==================== API 攔截整合 ====================
+/**
+ * API 攔截相關狀態
+ * - userIdCache: username -> userId 的對照快取
+ * - apiInterceptorReady: 攔截器是否已準備好（已捕獲 tokens）
+ * - pendingApiRequests: 待處理的 API 查詢請求
+ */
+let userIdCache = {};
+let apiInterceptorReady = false;
+let pendingApiRequests = new Map();
+
+/**
+ * 注入 API 攔截腳本到頁面的 main world
+ */
+function injectApiInterceptor() {
+  if (document.getElementById('geo-tag-injected')) {
+    console.log('[小黃標] API 攔截器已存在');
+    return;
+  }
+
+  const script = document.createElement('script');
+  script.id = 'geo-tag-injected';
+  script.src = chrome.runtime.getURL('injected.js');
+  script.type = 'module';
+  script.onload = () => {
+    console.log('[小黃標] API 攔截器注入成功');
+    // 載入快取的 user IDs 到 injected script
+    loadUserIdCacheToInjected();
+  };
+  script.onerror = (e) => {
+    console.error('[小黃標] API 攔截器注入失敗:', e);
+  };
+  (document.head || document.documentElement).appendChild(script);
+}
+
+/**
+ * 從 storage 載入 user ID 快取並傳送給 injected script
+ */
+async function loadUserIdCacheToInjected() {
+  try {
+    const result = await chrome.storage.local.get(['userIdCache']);
+    if (result.userIdCache) {
+      userIdCache = result.userIdCache;
+      window.postMessage({
+        type: 'geo-tag-load-userid-cache',
+        data: userIdCache
+      }, '*');
+      console.log(`[小黃標] 已載入 ${Object.keys(userIdCache).length} 個 user ID 快取`);
+    }
+  } catch (e) {
+    console.error('[小黃標] 載入 user ID 快取失敗:', e);
+  }
+}
+
+/**
+ * 儲存新發現的 user IDs 到快取
+ */
+async function saveUserIdCache(newUserIds) {
+  try {
+    userIdCache = { ...userIdCache, ...newUserIds };
+    await chrome.storage.local.set({ userIdCache });
+    console.log(`[小黃標] 已儲存 ${Object.keys(newUserIds).length} 個新 user IDs`);
+  } catch (e) {
+    console.error('[小黃標] 儲存 user ID 快取失敗:', e);
+  }
+}
+
+/**
+ * 透過 API 攔截方式查詢用戶位置
+ * @param {string} username - 用戶名稱（不含 @）
+ * @returns {Promise<object|null>} Profile 資訊
+ */
+function queryViaApiInterception(username) {
+  return new Promise((resolve) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // 設定超時
+    const timeout = setTimeout(() => {
+      pendingApiRequests.delete(requestId);
+      console.log(`[小黃標] API 查詢超時: @${username}`);
+      resolve(null);
+    }, 10000);
+
+    // 儲存待處理請求
+    pendingApiRequests.set(requestId, { resolve, timeout, username });
+
+    // 先檢查是否有 user ID
+    const userId = userIdCache[username];
+    if (userId) {
+      // 有 user ID，直接查詢 profile
+      window.postMessage({
+        type: 'geo-tag-fetch-request',
+        requestId,
+        userId
+      }, '*');
+    } else {
+      // 沒有 user ID，先查詢 user ID
+      window.postMessage({
+        type: 'geo-tag-userid-request',
+        requestId,
+        username
+      }, '*');
+    }
+  });
+}
+
+// 監聽來自 injected script 的事件
+window.addEventListener('message', async (event) => {
+  if (event.source !== window) return;
+
+  // 處理 tokens 準備好事件
+  if (event.data?.type === 'geo-tag-tokens-ready') {
+    apiInterceptorReady = true;
+    console.log('[小黃標] API 攔截器已準備好');
+  }
+
+  // 處理新發現的 user IDs
+  if (event.data?.type === 'geo-tag-new-user-ids') {
+    const newUserIds = event.data.data;
+    await saveUserIdCache(newUserIds);
+  }
+
+  // 處理 user ID 查詢回應
+  if (event.data?.type === 'geo-tag-userid-response') {
+    const { requestId, userId } = event.data;
+    const pending = pendingApiRequests.get(requestId);
+    if (pending && userId) {
+      // 找到 user ID，繼續查詢 profile
+      userIdCache[pending.username] = userId;
+      window.postMessage({
+        type: 'geo-tag-fetch-request',
+        requestId,
+        userId
+      }, '*');
+    } else if (pending) {
+      // 找不到 user ID
+      clearTimeout(pending.timeout);
+      pendingApiRequests.delete(requestId);
+      pending.resolve(null);
+    }
+  }
+
+  // 處理 profile 查詢回應
+  if (event.data?.type === 'geo-tag-fetch-response') {
+    const { requestId, result } = event.data;
+    const pending = pendingApiRequests.get(requestId);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pendingApiRequests.delete(requestId);
+      pending.resolve(result);
+    }
+  }
+
+  // 處理 rate limited 事件
+  if (event.data?.type === 'geo-tag-rate-limited') {
+    console.warn('[小黃標] ⚠️ 被 Threads 限制請求頻率');
+    // 通知 background.js
+    try {
+      chrome.runtime.sendMessage({ action: 'apiRateLimited' });
+    } catch (e) { /* ignore */ }
+  }
+
+  // 處理自動提取的 profile 資訊
+  if (event.data?.type === 'geo-tag-profile-extracted') {
+    // 同時也是 CustomEvent，這裡處理 window.postMessage 版本
+  }
+});
+
+// 監聽 CustomEvent（injected script 發送的 profile 資訊）
+window.addEventListener('geo-tag-profile-extracted', async (event) => {
+  const profileInfo = event.detail;
+  if (profileInfo && profileInfo.username && profileInfo.location) {
+    console.log(`[小黃標] 自動提取到資訊: @${profileInfo.username} -> ${profileInfo.location}`);
+
+    // 儲存到快取
+    try {
+      const username = profileInfo.username;
+      const cacheResult = await chrome.storage.local.get(['regionCache']);
+      const cache = cacheResult.regionCache || {};
+      cache[username] = {
+        region: profileInfo.location,
+        timestamp: Date.now(),
+        source: 'api_intercept'
+      };
+      await chrome.storage.local.set({ regionCache: cache });
+
+      // 通知 sidepanel 更新
+      chrome.runtime.sendMessage({
+        action: 'regionUpdated',
+        username,
+        region: profileInfo.location
+      }).catch(() => {});
+    } catch (e) {
+      console.error('[小黃標] 儲存提取資訊失敗:', e);
+    }
+  }
+});
+
+// 頁面載入時注入攔截器
+waitForDomReady().then(() => {
+  injectApiInterceptor();
+});
+
+// 監聽來自 sidepanel 的消息
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 處理 ping（確認 content script 已載入）
@@ -263,6 +466,88 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[Threads] 執行頁面捲動時發生錯誤:', error);
       sendResponse({ success: false, error: error.message });
     }
+    return false;
+  }
+
+  // 處理 API 攔截方式查詢區域（新方法）
+  if (request.action === 'queryViaApi') {
+    (async () => {
+      try {
+        const account = request.account;
+        const username = account.startsWith('@') ? account.slice(1) : account;
+        console.log(`[小黃標] 開始 API 攔截查詢 @${username}`);
+
+        // 檢查 API 攔截器是否準備好
+        if (!apiInterceptorReady) {
+          console.log('[小黃標] API 攔截器尚未準備好，嘗試掃描頁面');
+          window.postMessage({ type: 'geo-tag-scan-request' }, '*');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        // 檢查是否有 user ID
+        const userId = userIdCache[username];
+        if (!userId) {
+          console.log(`[小黃標] 找不到 @${username} 的 user ID，回退到開分頁方式`);
+          sendResponse({
+            success: true,
+            account: account,
+            region: null,
+            fallbackNeeded: true
+          });
+          return;
+        }
+
+        // 透過 API 查詢
+        const result = await queryViaApiInterception(username);
+
+        if (result && result._rateLimited) {
+          console.log('[小黃標] API 被限速，回退到開分頁方式');
+          sendResponse({
+            success: true,
+            account: account,
+            region: null,
+            fallbackNeeded: true,
+            rateLimited: true
+          });
+          return;
+        }
+
+        if (result && result.location) {
+          console.log(`[小黃標] API 查詢成功: @${username} -> ${result.location}`);
+          sendResponse({
+            success: true,
+            account: account,
+            region: result.location,
+            joined: result.joined
+          });
+        } else {
+          console.log(`[小黃標] API 查詢未找到位置，回退到開分頁方式`);
+          sendResponse({
+            success: true,
+            account: account,
+            region: null,
+            fallbackNeeded: true
+          });
+        }
+      } catch (error) {
+        console.error(`[小黃標] API 查詢錯誤:`, error);
+        sendResponse({
+          success: false,
+          error: error.message,
+          fallbackNeeded: true
+        });
+      }
+    })();
+    return true; // 保持消息通道打開以進行異步響應
+  }
+
+  // 處理 API 攔截器狀態查詢
+  if (request.action === 'getApiInterceptorStatus') {
+    sendResponse({
+      success: true,
+      ready: apiInterceptorReady,
+      userIdCacheSize: Object.keys(userIdCache).length
+    });
     return false;
   }
 });

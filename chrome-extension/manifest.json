@@ -16,7 +16,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["queryManager.js"],
+      "resources": ["queryManager.js", "injected.js"],
       "matches": ["*://www.threads.com/*"]
     }
   ],

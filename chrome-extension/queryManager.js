@@ -386,6 +386,42 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   try {
     console.log(`[QueryManager] 正在查詢 @${cleanUsername}...`);
 
+    // ==================== 新增：API 攔截優先查詢 ====================
+    // 先嘗試使用 API 攔截方式查詢（較快）
+    try {
+      // 取得 Threads 主分頁
+      const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
+      const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
+
+      if (activeThreadsTab) {
+        console.log(`[QueryManager] 嘗試 API 攔截查詢 @${cleanUsername}`);
+
+        const apiResponse = await chrome.tabs.sendMessage(activeThreadsTab.id, {
+          action: 'queryViaApi',
+          account: cleanUsername
+        }).catch(() => null);
+
+        if (apiResponse && apiResponse.success && apiResponse.region && !apiResponse.fallbackNeeded) {
+          console.log(`[QueryManager] API 攔截成功 @${cleanUsername}: ${apiResponse.region}`);
+
+          // 保存到快取
+          await saveCachedRegion(cleanUsername, apiResponse.region);
+
+          return {
+            success: true,
+            region: apiResponse.region,
+            fromCache: false,
+            source: 'api_intercept'
+          };
+        } else if (apiResponse && apiResponse.fallbackNeeded) {
+          console.log(`[QueryManager] API 攔截需要回退 @${cleanUsername}，使用開分頁方式`);
+        }
+      }
+    } catch (apiError) {
+      console.log(`[QueryManager] API 攔截方式失敗，使用開分頁方式: ${apiError.message}`);
+    }
+    // ==================== 結束：API 攔截優先查詢 ====================
+
     // 隨機延遲 2-5 秒，避免同時發起太多查詢，更像真實用戶行為
     const randomDelay = Math.random() * 2000 + 3000; // 1000-3000ms
     console.log(`[Threads] 等待 ${Math.round(randomDelay / 1000)} 秒後查詢下一個用戶`);
@@ -750,6 +786,67 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
     }
 
     // ==================== 地點查詢部分 ====================
+
+    // 優先嘗試 API 攔截方式查詢地點
+    let apiRegion = null;
+    try {
+      const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
+      const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
+
+      if (activeThreadsTab) {
+        console.log(`[QueryManager] 嘗試 API 攔截查詢地點 @${cleanUsername}`);
+
+        const apiResponse = await chrome.tabs.sendMessage(activeThreadsTab.id, {
+          action: 'queryViaApi',
+          account: cleanUsername
+        }).catch(() => null);
+
+        if (apiResponse && apiResponse.success && apiResponse.region && !apiResponse.fallbackNeeded) {
+          console.log(`[QueryManager] API 攔截成功取得地點 @${cleanUsername}: ${apiResponse.region}`);
+          apiRegion = apiResponse.region;
+
+          // 保存到快取
+          await saveCachedRegion(cleanUsername, apiRegion);
+
+          // 如果不需要側寫分析（或已有快取），可以直接返回
+          if (!enableProfileAnalysis || !queryTab) {
+            // 關閉分頁（如果有的話）
+            if (queryTab) {
+              try {
+                await chrome.tabs.remove(queryTab.id);
+              } catch (e) {}
+            }
+
+            return {
+              success: true,
+              region: apiRegion,
+              fromCache: false,
+              source: 'api_intercept'
+            };
+          }
+        }
+      }
+    } catch (apiError) {
+      console.log(`[QueryManager] API 攔截方式失敗: ${apiError.message}`);
+    }
+
+    // 如果 API 已取得地點且有分頁（側寫分析用），可以跳過開分頁查詢地點
+    if (apiRegion) {
+      // 關閉分頁
+      if (queryTab) {
+        try {
+          await chrome.tabs.remove(queryTab.id);
+        } catch (e) {}
+      }
+
+      return {
+        success: true,
+        region: apiRegion,
+        fromCache: false,
+        source: 'api_intercept'
+      };
+    }
+
     // 步驟 4: 導航到英文版個人頁面進行地點查詢
     console.log(`[QueryManager] 步驟 4: 導航到 @${cleanUsername} 的英文版個人頁面查詢地點`);
     const profileUrl = `https://www.threads.com/@${cleanUsername}?hl=en`;
