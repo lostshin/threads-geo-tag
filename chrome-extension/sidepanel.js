@@ -276,17 +276,32 @@ async function showRegionLabels()
     for (const user of currentGetUserListArray) {
       let region = null;
       let profile = null;
+      let joined = null;
 
-      // 處理 region
+      // 處理 region 和 joined
       if (user.region) {
         region = user.region;
+        joined = user.joined || null;
       } else {
         // 從快取中查詢（去掉 @ 符號）
         const username = user.account.replace(/^@/, '');
-        const cachedRegion = await getCachedRegion(username);
-        if (cachedRegion) {
-          region = cachedRegion;
-          user.region = cachedRegion; // 同步更新 user 物件
+        try {
+          const response = await chrome.runtime.sendMessage({
+            action: 'getCachedUserInfo',
+            username: username
+          });
+          if (response && response.success) {
+            if (response.region) {
+              region = response.region;
+              user.region = response.region; // 同步更新 user 物件
+            }
+            if (response.joined) {
+              joined = response.joined;
+              user.joined = response.joined; // 同步更新 user 物件
+            }
+          }
+        } catch (error) {
+          console.log(`[Sidepanel] 讀取用戶快取失敗 ${username}:`, error);
         }
       }
 
@@ -315,7 +330,8 @@ async function showRegionLabels()
       if (region !== null || profile !== null) {
         regionData[user.account] = {
           region: region,
-          profile: profile
+          profile: profile,
+          joined: joined
         };
       }
     }

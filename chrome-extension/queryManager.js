@@ -13,6 +13,12 @@ const pendingQueries = new Set(); // 正在查詢中的用戶名（防止同一�
 const recentlyQueriedUrls = new Map(); // URL 冷卻追蹤 { username: timestamp }
 const URL_COOLDOWN_MS = 60000; // URL 冷卻時間（60 秒）
 
+// ==================== 連續 null 結果追蹤（開分頁方式）====================
+let consecutiveNullCount = 0; // 連續 null 結果計數
+const NULL_WARNING_THRESHOLD = 3; // 達到此數量時發出警告
+let lastNullWarningTime = 0; // 上次警告時間（避免頻繁警告）
+const NULL_WARNING_COOLDOWN_MS = 30000; // 警告冷卻時間（30 秒）
+
 // 發送隊列狀態更新到 popup
 function sendQueueUpdate(message, type) {
   chrome.runtime.sendMessage({
@@ -24,6 +30,98 @@ function sendQueueUpdate(message, type) {
   }).catch(() => {
     // popup 可能未開啟，忽略錯誤
   });
+}
+
+/**
+ * 檢查連續 null 結果並發出警告
+ * @param {boolean} isNull - 本次結果是否為 null/未揭露
+ * @param {string} source - 查詢來源 ('tab' 或 'api')
+ */
+function checkConsecutiveNullResults(isNull, source) {
+  if (source !== 'tab') {
+    // 只追蹤開分頁方式的結果
+    return;
+  }
+
+  if (isNull) {
+    consecutiveNullCount++;
+    console.log(`[QueryManager] 連續 null 結果: ${consecutiveNullCount}/${NULL_WARNING_THRESHOLD}`);
+
+    const now = Date.now();
+    if (consecutiveNullCount >= NULL_WARNING_THRESHOLD &&
+        now - lastNullWarningTime > NULL_WARNING_COOLDOWN_MS) {
+      // 發出警告
+      lastNullWarningTime = now;
+      const warningMessage = `⚠️ 連續 ${consecutiveNullCount} 次查詢結果為「未揭露」，可能暫時被 Threads 封鎖，建議切換為「API 攔截」方式`;
+      console.warn(`[QueryManager] ${warningMessage}`);
+
+      // 發送警告到 popup 和 sidepanel
+      sendQueueUpdate(warningMessage, 'warning');
+      chrome.runtime.sendMessage({
+        action: 'updateSidepanelStatus',
+        message: warningMessage,
+        type: 'warning'
+      }).catch(() => {});
+    }
+  } else {
+    // 有正常結果，重置計數
+    if (consecutiveNullCount > 0) {
+      console.log(`[QueryManager] 重置連續 null 計數（原: ${consecutiveNullCount}）`);
+    }
+    consecutiveNullCount = 0;
+  }
+}
+
+// ==================== 地區名稱正規化 ====================
+// 地區名稱對照表（各語言 → 英文）
+const REGION_MAP = {
+  // 台灣
+  '台灣': 'Taiwan', '臺灣': 'Taiwan', '타이완': 'Taiwan',
+  // 日本
+  '日本': 'Japan', '일본': 'Japan',
+  // 中國
+  '中國': 'China', '中国': 'China', '중국': 'China',
+  // 香港
+  '香港': 'Hong Kong', '홍콩': 'Hong Kong',
+  // 韓國
+  '韓國': 'South Korea', '한국': 'South Korea', '大韓民國': 'South Korea',
+  // 美國
+  '美國': 'United States', '미국': 'United States', 'アメリカ': 'United States',
+  // 英國
+  '英國': 'United Kingdom', '영국': 'United Kingdom',
+  // 新加坡
+  '新加坡': 'Singapore', '싱가포르': 'Singapore',
+  // 馬來西亞
+  '馬來西亞': 'Malaysia', '马来西亚': 'Malaysia',
+  // 泰國
+  '泰國': 'Thailand', '태국': 'Thailand',
+  // 越南
+  '越南': 'Vietnam', '베트남': 'Vietnam',
+  // 印尼
+  '印尼': 'Indonesia', '印度尼西亞': 'Indonesia',
+  // 菲律賓
+  '菲律賓': 'Philippines', '필리핀': 'Philippines',
+  // 澳洲
+  '澳洲': 'Australia', '澳大利亞': 'Australia', '호주': 'Australia',
+  // 加拿大
+  '加拿大': 'Canada', '캐나다': 'Canada',
+  // 印度
+  '印度': 'India', '인도': 'India'
+};
+
+/**
+ * 正規化地區名稱（將各語言統一為英文）
+ * @param {string} region - 原始地區名稱
+ * @returns {string} 正規化後的地區名稱
+ */
+function normalizeRegion(region) {
+  if (!region || region === '未揭露') return region;
+  const trimmed = region.trim();
+  if (REGION_MAP[trimmed]) {
+    console.log(`[QueryManager] 地區正規化: "${trimmed}" → "${REGION_MAP[trimmed]}"`);
+    return REGION_MAP[trimmed];
+  }
+  return trimmed;
 }
 
 // ==================== 快取配置 ====================
@@ -73,22 +171,56 @@ async function getCachedRegion(username) {
  * 將用戶地區保存到快取
  * @param {string} username - 用戶帳號（不含 @ 符號）
  * @param {string} region - 地區
+ * @param {string} joined - 加入日期（可選）
  * @returns {Promise<void>}
  */
-async function saveCachedRegion(username, region) {
+async function saveCachedRegion(username, region, joined = null) {
   try {
+    // 正規化地區名稱（統一為英文）
+    const normalizedRegion = normalizeRegion(region);
+
     const result = await chrome.storage.local.get([CACHE_KEY]);
     const cache = result[CACHE_KEY] || {};
 
     cache[username] = {
-      region: region,
+      region: normalizedRegion,
+      joined: joined,
       timestamp: Date.now()
     };
 
     await chrome.storage.local.set({ [CACHE_KEY]: cache });
-    console.log(`[Cache] 已保存快取 @${username}: ${region}`);
+    console.log(`[Cache] 已保存快取 @${username}: ${normalizedRegion}${joined ? ', 加入: ' + joined : ''}`);
   } catch (error) {
     console.error('[Cache] 保存快取失敗:', error);
+  }
+}
+
+/**
+ * 從快取中讀取完整用戶資訊（包含地區和加入日期）
+ * @param {string} username - 用戶帳號（不含 @ 符號）
+ * @returns {Promise<{region: string, joined: string}|null>} 返回用戶資訊或 null
+ */
+async function getCachedUserInfo(username) {
+  try {
+    const result = await chrome.storage.local.get([CACHE_KEY]);
+    const cache = result[CACHE_KEY] || {};
+
+    if (cache[username]) {
+      const cached = cache[username];
+      const now = Date.now();
+      const expiryTime = CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+
+      if (now - cached.timestamp < expiryTime) {
+        return {
+          region: cached.region,
+          joined: cached.joined || null
+        };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('[Cache] 讀取用戶資訊失敗:', error);
+    return null;
   }
 }
 
@@ -447,12 +579,13 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
           if (apiResponse && apiResponse.success && apiResponse.region && !apiResponse.fallbackNeeded) {
             console.log(`[QueryManager] API 攔截成功 @${cleanUsername}: ${apiResponse.region}`);
 
-            // 保存到快取
-            await saveCachedRegion(cleanUsername, apiResponse.region);
+            // 保存到快取（包含 joined 資訊）
+            await saveCachedRegion(cleanUsername, apiResponse.region, apiResponse.joined || null);
 
             return {
               success: true,
               region: apiResponse.region,
+              joined: apiResponse.joined || null,
               fromCache: false,
               source: 'api_intercept'
             };
@@ -657,6 +790,10 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       }
       console.log(`[QueryManager] 查詢成功 @${cleanUsername}: ${region}`);
 
+      // 追蹤連續 null 結果（開分頁方式）
+      const isNullResult = !response.region || region === '未揭露';
+      checkConsecutiveNullResults(isNullResult, 'tab');
+
       // 保存到快取
       await saveCachedRegion(cleanUsername, region);
 
@@ -689,6 +826,9 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       await saveCachedRegion(cleanUsername, '未揭露');
       console.log(`[QueryManager] @${cleanUsername} 未揭露，已保存到快取`);
 
+      // 追蹤連續 null 結果（開分頁方式）
+      checkConsecutiveNullResults(true, 'tab');
+
       return {
         success: true,
         region: '未揭露',
@@ -716,6 +856,9 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
     // 查詢錯誤也保存「未揭露」到快取，避免重複嘗試
     await saveCachedRegion(cleanUsername, '未揭露');
     console.log(`[QueryManager] @${cleanUsername} 查詢錯誤，標記為未揭露`);
+
+    // 追蹤連續 null 結果（開分頁方式）
+    checkConsecutiveNullResults(true, 'tab');
 
     console.error(`[QueryManager] 查詢失敗 @${cleanUsername}:`, error.message);
     return {
@@ -1402,6 +1545,7 @@ var QueryManager = {
   queryUserRegion: queryUserRegion,
   getQueueStatus: getQueueStatus,
   getCachedRegion: getCachedRegion,
+  getCachedUserInfo: getCachedUserInfo,
   getAllCachedRegions: getAllCachedRegions,
   saveCachedRegion: saveCachedRegion,
   clearCache: clearCache,

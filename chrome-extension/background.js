@@ -65,7 +65,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               const profileInfo = profileCache[username];
               regionData['@' + username] = {
                 region: regionInfo ? regionInfo.region : null,
-                profile: profileInfo ? profileInfo.profile : null
+                profile: profileInfo ? profileInfo.profile : null,
+                joined: regionInfo ? regionInfo.joined : null
               };
             }
 
@@ -206,6 +207,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true, region: region });
       } catch (error) {
         console.error('[Background] 獲取緩存失敗:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
+  // 獲取緩存中的用戶完整資訊（包含 region 和 joined）
+  if (request.action === 'getCachedUserInfo') {
+    const username = request.username;
+
+    (async () => {
+      try {
+        const userInfo = await QueryManager.getCachedUserInfo(username);
+        if (userInfo) {
+          sendResponse({
+            success: true,
+            region: userInfo.region,
+            joined: userInfo.joined
+          });
+        } else {
+          sendResponse({ success: true, region: null, joined: null });
+        }
+      } catch (error) {
+        console.error('[Background] 獲取用戶資訊失敗:', error);
         sendResponse({ success: false, error: error.message });
       }
     })();

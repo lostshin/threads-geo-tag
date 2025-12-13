@@ -543,3 +543,8 @@ input[type="number"] {
 .queue-log-item.pending {
   color: var(--brand-primary);
 }
+
+.queue-log-item.warning {
+  color: #f97316;
+  font-weight: 600;
+}

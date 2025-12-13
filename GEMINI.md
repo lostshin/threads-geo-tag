@@ -60,6 +60,7 @@ activation: always
 - `content.js` - 注入 threads.com 頁面
 - `queryManager.js` - 隊列、快取、並發控制
 - `injected.js` - API 攔截
+- `dateUtils.js` - 日期解析與新用戶判斷
 - `popup.html/js/css` - Popup UI（含隊列狀態）
 - `sidepanel.*` - Side Panel UI
 
@@ -71,6 +72,7 @@ activation: always
 3. 確認自動查詢遵守並發限制
 4. 測試「未揭露」處理
 5. 驗證隊列狀態即時更新
+6. 驗證新用戶 [新] 標籤顯示（2 個月內加入）
 
 ## Commit 慣例
 

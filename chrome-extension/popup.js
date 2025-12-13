@@ -423,7 +423,8 @@ async function showRegionLabels() {
       if (user.region) {
         regionData[user.account] = {
           region: user.region,
-          profile: user.profile || null
+          profile: user.profile || null,
+          joined: user.joined || null
         };
       }
     });

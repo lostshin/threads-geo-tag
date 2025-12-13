@@ -1334,9 +1334,10 @@ function generateLabelText(region, profile) {
  * 生成標籤 DOM 元素（包含地區和可點擊的側寫標籤）
  * @param {string|null} region - 地區
  * @param {string|null} profile - 側寫標籤（可能包含理由）
+ * @param {string|null} joined - 加入日期（用於判斷新用戶）
  * @returns {HTMLElement} 標籤 DOM 元素
  */
-function generateLabelElement(region, profile) {
+function generateLabelElement(region, profile, joined = null) {
   const container = document.createElement('span');
   container.className = 'threads-label-text';
 
@@ -1352,6 +1353,21 @@ function generateLabelElement(region, profile) {
 
   const locationSpan = document.createTextNode(locationText);
   container.appendChild(locationSpan);
+
+  // 檢查是否為新用戶（2 個月內加入）
+  if (joined && window.DateUtils && window.DateUtils.isNewUser(joined)) {
+    const newTag = document.createElement('span');
+    newTag.className = 'threads-new-user-tag';
+    newTag.textContent = '[新]';
+    newTag.title = `加入時間：${joined}`;
+    newTag.style.cssText = `
+      margin-left: 4px;
+      color: rgb(239, 68, 68);
+      font-weight: 600;
+      font-size: inherit;
+    `;
+    container.appendChild(newTag);
+  }
 
   // 如果有側寫，添加可點擊的標籤
   if (profile) {
@@ -1439,13 +1455,15 @@ async function showRegionLabelsOnPageInternal(regionData) {
       // 解析 regionData，支援新舊格式
       let region = null;
       let profile = null;
+      let joined = null;
       const accountData = mergedRegionData[account];
 
       if (accountData) {
         if (typeof accountData === 'object' && accountData !== null) {
-          // 新格式: { region: "Taiwan", profile: "標籤" }
+          // 新格式: { region: "Taiwan", profile: "標籤", joined: "December 2024" }
           region = accountData.region;
           profile = accountData.profile;
+          joined = accountData.joined;
         } else {
           // 舊格式: "Taiwan"
           region = accountData;
@@ -1487,7 +1505,7 @@ async function showRegionLabelsOnPageInternal(regionData) {
           existingLabel.appendChild(arrow);
 
           // 使用可點擊的標籤元素
-          const labelElement = generateLabelElement(region, profile);
+          const labelElement = generateLabelElement(region, profile, joined);
           existingLabel.appendChild(labelElement);
 
           // 如果是待查詢且沒有 [C] 按鈕，添加（但如果已有側寫則視為已完成）
@@ -1496,7 +1514,7 @@ async function showRegionLabelsOnPageInternal(regionData) {
           }
         } else {
           // 替換為可點擊的標籤元素
-          const newLabelElement = generateLabelElement(region, profile);
+          const newLabelElement = generateLabelElement(region, profile, joined);
           labelTextSpan.replaceWith(newLabelElement);
 
           // 處理 [C] 按鈕
@@ -1581,7 +1599,7 @@ async function showRegionLabelsOnPageInternal(regionData) {
       label.appendChild(arrow);
 
       // 創建文字部分（使用可點擊的標籤元素）
-      const labelText = generateLabelElement(region, profile);
+      const labelText = generateLabelElement(region, profile, joined);
       label.appendChild(labelText);
 
       // 如果需要，添加 [C] 按鈕

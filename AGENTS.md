@@ -13,12 +13,18 @@
   - `icons/` holds extension icons.
 - No separate build or test directories; the extension runs directly from source.
 
-## Key Features (v1.0.4)
+## Key Features (v1.0.5)
 
 ### Query Methods
 - **關閉 (Off)**: Manual query only via label buttons
 - **API**: Fast method using intercepted API data (<1s)
 - **開分頁 (Tab)**: Opens profile page to scrape "Based in" field (3-5s)
+
+### New User Marking 🆕
+- Users who joined within **2 months** are marked with a red `[新]` tag
+- Hover over the tag to see the exact join date
+- Uses `dateUtils.js` for multi-language date parsing (EN/ZH/JA/KO)
+- Join date is cached alongside region data
 
 ### Duplicate Query Prevention (Multi-layer)
 1. **Cache Check**: Skip if region data already cached
