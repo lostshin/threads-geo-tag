@@ -386,44 +386,73 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   try {
     console.log(`[QueryManager] 正在查詢 @${cleanUsername}...`);
 
-    // ==================== 新增：API 攔截優先查詢 ====================
-    // 先嘗試使用 API 攔截方式查詢（較快）
+    // ==================== 根據設定選擇查詢方式 ====================
+    // 從 storage 讀取查詢方式設定
+    let queryMethod = 'api'; // 預設使用 API 攔截
     try {
-      // 取得 Threads 主分頁
-      const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
-      const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
-
-      if (activeThreadsTab) {
-        console.log(`[QueryManager] 嘗試 API 攔截查詢 @${cleanUsername}`);
-
-        const apiResponse = await chrome.tabs.sendMessage(activeThreadsTab.id, {
-          action: 'queryViaApi',
-          account: cleanUsername
-        }).catch(() => null);
-
-        if (apiResponse && apiResponse.success && apiResponse.region && !apiResponse.fallbackNeeded) {
-          console.log(`[QueryManager] API 攔截成功 @${cleanUsername}: ${apiResponse.region}`);
-
-          // 保存到快取
-          await saveCachedRegion(cleanUsername, apiResponse.region);
-
-          return {
-            success: true,
-            region: apiResponse.region,
-            fromCache: false,
-            source: 'api_intercept'
-          };
-        } else if (apiResponse && apiResponse.fallbackNeeded) {
-          console.log(`[QueryManager] API 攔截需要回退 @${cleanUsername}，使用開分頁方式`);
-        }
-      }
-    } catch (apiError) {
-      console.log(`[QueryManager] API 攔截方式失敗，使用開分頁方式: ${apiError.message}`);
+      const storageResult = await chrome.storage.local.get(['queryMethod']);
+      queryMethod = storageResult.queryMethod || 'api';
+    } catch (e) {
+      console.log('[QueryManager] 讀取查詢方式設定失敗，使用預設值 api');
     }
-    // ==================== 結束：API 攔截優先查詢 ====================
+
+    // 如果使用者選擇 API 攔截方式
+    if (queryMethod === 'api') {
+      try {
+        // 取得 Threads 主分頁
+        const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
+        const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
+
+        if (activeThreadsTab) {
+          console.log(`[QueryManager] 使用 API 攔截查詢 @${cleanUsername}`);
+
+          const apiResponse = await chrome.tabs.sendMessage(activeThreadsTab.id, {
+            action: 'queryViaApi',
+            account: cleanUsername
+          }).catch(() => null);
+
+          if (apiResponse && apiResponse.success && apiResponse.region && !apiResponse.fallbackNeeded) {
+            console.log(`[QueryManager] API 攔截成功 @${cleanUsername}: ${apiResponse.region}`);
+
+            // 保存到快取
+            await saveCachedRegion(cleanUsername, apiResponse.region);
+
+            return {
+              success: true,
+              region: apiResponse.region,
+              fromCache: false,
+              source: 'api_intercept'
+            };
+          } else if (apiResponse && apiResponse.fallbackNeeded) {
+            // API 攔截失敗（找不到 user ID 等），返回失敗讓使用者知道
+            console.log(`[QueryManager] API 攔截失敗 @${cleanUsername}：找不到 user ID，請先瀏覽該用戶的動態`);
+            return {
+              success: false,
+              error: '找不到 user ID，請先瀏覽該用戶的動態，或切換為「開新分頁」方式'
+            };
+          }
+        } else {
+          console.log('[QueryManager] 找不到 Threads 分頁，API 攔截失敗');
+          return {
+            success: false,
+            error: '找不到 Threads 分頁，請開啟 threads.com 或切換為「開新分頁」方式'
+          };
+        }
+      } catch (apiError) {
+        console.log(`[QueryManager] API 攔截方式失敗: ${apiError.message}`);
+        return {
+          success: false,
+          error: `API 攔截失敗: ${apiError.message}`
+        };
+      }
+    }
+    // ==================== 結束：API 攔截查詢 ====================
+
+    // ==================== 使用開新分頁方式查詢 ====================
+    console.log(`[QueryManager] 使用開新分頁方式查詢 @${cleanUsername}`);
 
     // 隨機延遲 2-5 秒，避免同時發起太多查詢，更像真實用戶行為
-    const randomDelay = Math.random() * 2000 + 3000; // 1000-3000ms
+    const randomDelay = Math.random() * 2000 + 3000; // 3000-5000ms
     console.log(`[Threads] 等待 ${Math.round(randomDelay / 1000)} 秒後查詢下一個用戶`);
     await new Promise(resolve => setTimeout(resolve, randomDelay));
 
@@ -787,11 +816,19 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
 
     // ==================== 地點查詢部分 ====================
 
-    // 優先嘗試 API 攔截方式查詢地點
-    let apiRegion = null;
+    // 從 storage 讀取查詢方式設定
+    let queryMethod = 'api';
     try {
-      const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
-      const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
+      const storageResult = await chrome.storage.local.get(['queryMethod']);
+      queryMethod = storageResult.queryMethod || 'api';
+    } catch (e) {}
+
+    // 如果使用者選擇 API 攔截方式，嘗試使用 API 攔截
+    let apiRegion = null;
+    if (queryMethod === 'api') {
+      try {
+        const threadsTabs = await chrome.tabs.query({ url: '*://www.threads.com/*' });
+        const activeThreadsTab = threadsTabs.find(tab => tab.active) || threadsTabs[0];
 
       if (activeThreadsTab) {
         console.log(`[QueryManager] 嘗試 API 攔截查詢地點 @${cleanUsername}`);
@@ -826,9 +863,10 @@ async function executeIntegratedQuery(username, enableProfileAnalysis = false, s
           }
         }
       }
-    } catch (apiError) {
-      console.log(`[QueryManager] API 攔截方式失敗: ${apiError.message}`);
-    }
+      } catch (apiError) {
+        console.log(`[QueryManager] API 攔截方式失敗: ${apiError.message}`);
+      }
+    } // End of if (queryMethod === 'api')
 
     // 如果 API 已取得地點且有分頁（側寫分析用），可以跳過開分頁查詢地點
     if (apiRegion) {
@@ -1040,22 +1078,25 @@ async function processQueryQueue() {
  * @returns {Promise<{success: boolean, region?: string, error?: string}>|null} 返回 null 表示無法加入隊列
  */
 function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
+  // 移除 @ 符號（如果有的話）
+  const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+
   // 檢查隊列是否已滿
   if (queryQueue.length >= queryQueueMax) {
-    console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${username}`);
+    console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${cleanUsername}`);
     return null;
   }
 
   // 檢查是否已在隊列中（避免重複）
-  const isAlreadyInQueue = queryQueue.some(task => task.username === username);
+  const isAlreadyInQueue = queryQueue.some(task => task.username === cleanUsername);
   if (isAlreadyInQueue) {
-    console.log(`[QueryManager] @${username} 已在隊列中，跳過重複加入`);
+    console.log(`[QueryManager] @${cleanUsername} 已在隊列中，跳過重複加入`);
     return null;
   }
 
   return new Promise((resolve, reject) => {
     queryQueue.push({
-      username,
+      username: cleanUsername,
       isIntegrated: false,
       shouldKeepTab,
       keepTabFilter,
@@ -1063,7 +1104,7 @@ function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
       reject
     });
 
-    console.log(`[QueryManager] 任務已加入隊列 @${username} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
+    console.log(`[QueryManager] 任務已加入隊列 @${cleanUsername} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
 
     // 嘗試立即開始處理隊列
     processQueryQueue();
@@ -1080,22 +1121,25 @@ function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
  * @returns {Promise<{success: boolean, region?: string, error?: string}>|null} 返回 null 表示無法加入隊列
  */
 function addToIntegratedQueryQueue(username, enableProfileAnalysis = false, shouldKeepTab = false, keepTabFilter = '', onProfileContentReady = null) {
+  // 移除 @ 符號（如果有的話）
+  const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+
   // 檢查隊列是否已滿
   if (queryQueue.length >= queryQueueMax) {
-    console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${username}`);
+    console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${cleanUsername}`);
     return null;
   }
 
   // 檢查是否已在隊列中（避免重複）
-  const isAlreadyInQueue = queryQueue.some(task => task.username === username);
+  const isAlreadyInQueue = queryQueue.some(task => task.username === cleanUsername);
   if (isAlreadyInQueue) {
-    console.log(`[QueryManager] @${username} 已在隊列中，跳過重複加入`);
+    console.log(`[QueryManager] @${cleanUsername} 已在隊列中，跳過重複加入`);
     return null;
   }
 
   return new Promise((resolve, reject) => {
     queryQueue.push({
-      username,
+      username: cleanUsername,
       isIntegrated: true,
       enableProfileAnalysis,
       shouldKeepTab,
@@ -1105,7 +1149,7 @@ function addToIntegratedQueryQueue(username, enableProfileAnalysis = false, shou
       reject
     });
 
-    console.log(`[QueryManager] 整合查詢任務已加入隊列 @${username} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
+    console.log(`[QueryManager] 整合查詢任務已加入隊列 @${cleanUsername} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
 
     // 嘗試立即開始處理隊列
     processQueryQueue();

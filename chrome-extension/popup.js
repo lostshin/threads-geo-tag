@@ -25,6 +25,8 @@ var editApiKeyBtn = document.getElementById('editApiKeyBtn');
 var clearApiKeyBtn = document.getElementById('clearApiKeyBtn');
 var contentOutput = document.getElementById('contentOutput');
 var outputSection = document.getElementById('outputSection');
+var queryMethodToggle = document.getElementById('queryMethodToggle');
+var queryMethodDescription = document.getElementById('queryMethodDescription');
 
 // 全局變數
 var currentGetUserListArray = [];
@@ -101,8 +103,12 @@ async function loadSettings() {
       'autoQueryVisible',
       'maxConcurrentQueries',
       'llmProfileAnalysis',
-      'openaiApiKey'
+      'openaiApiKey',
+      'queryMethod'
     ]);
+
+    // 查詢方式設定
+    updateQueryMethodToggle(result.queryMethod || 'api');
 
     // 保留分頁設定
     keepTabCheckbox.checked = result.keepTabAfterQuery || false;
@@ -599,3 +605,45 @@ function updateUserList(users) {
 }
 
 console.log('[Popup] 已載入');
+
+// ==================== 查詢方式切換 ====================
+
+function updateQueryMethodToggle(method) {
+  if (!queryMethodToggle) return;
+
+  var buttons = queryMethodToggle.querySelectorAll('.method-btn');
+  buttons.forEach(function(btn) {
+    if (btn.dataset.value === method) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // 更新描述文字
+  if (queryMethodDescription) {
+    if (method === 'api') {
+      queryMethodDescription.textContent = 'API 較快（<1秒），需先瀏覽動態';
+    } else {
+      queryMethodDescription.textContent = '開分頁較穩定（3-5秒），自動開啟查詢頁';
+    }
+  }
+}
+
+// 監聽查詢方式切換按鈕點擊
+if (queryMethodToggle) {
+  queryMethodToggle.addEventListener('click', function(e) {
+    var btn = e.target.closest('.method-btn');
+    if (!btn) return;
+
+    var method = btn.dataset.value;
+    if (!method) return;
+
+    // 更新 UI
+    updateQueryMethodToggle(method);
+
+    // 保存到 storage
+    saveSetting('queryMethod', method);
+    console.log('[Popup] 查詢方式已切換為:', method);
+  });
+}

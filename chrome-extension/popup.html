@@ -39,6 +39,19 @@
       <h2 class="section-title">⚙️ 設定</h2>
 
       <div class="setting-item">
+        <span class="setting-label">查詢方式</span>
+        <div class="query-method-toggle" id="queryMethodToggle">
+          <button type="button" class="method-btn active" data-value="api">
+            ⚡ API
+          </button>
+          <button type="button" class="method-btn" data-value="tab">
+            📄 開分頁
+          </button>
+        </div>
+        <p class="setting-desc" id="queryMethodDescription">API 較快（<1秒），需先瀏覽動態</p>
+      </div>
+
+      <div class="setting-item">
         <label class="toggle-container">
           <input type="checkbox" id="autoQueryVisibleCheckbox">
           <span class="toggle-slider"></span>

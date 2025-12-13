@@ -228,10 +228,10 @@ window.addEventListener('geo-tag-profile-extracted', async (event) => {
       };
       await chrome.storage.local.set({ regionCache: cache });
 
-      // 通知 sidepanel 更新
+      // 通知 sidepanel 更新（使用 updateUserRegion action 讓 sidepanel 即時更新 UI）
       chrome.runtime.sendMessage({
-        action: 'regionUpdated',
-        username,
+        action: 'updateUserRegion',
+        account: `@${username}`,  // sidepanel 使用帶 @ 的格式
         region: profileInfo.location
       }).catch(() => {});
     } catch (e) {
