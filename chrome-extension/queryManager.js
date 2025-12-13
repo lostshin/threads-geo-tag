@@ -13,6 +13,19 @@ const pendingQueries = new Set(); // 正在查詢中的用戶名（防止同一�
 const recentlyQueriedUrls = new Map(); // URL 冷卻追蹤 { username: timestamp }
 const URL_COOLDOWN_MS = 60000; // URL 冷卻時間（60 秒）
 
+// 發送隊列狀態更新到 popup
+function sendQueueUpdate(message, type) {
+  chrome.runtime.sendMessage({
+    action: 'queueUpdate',
+    queueLength: queryQueue.length,
+    activeCount: activeQueryCount,
+    message: message,
+    type: type // 'success', 'error', 'pending'
+  }).catch(() => {
+    // popup 可能未開啟，忽略錯誤
+  });
+}
+
 // ==================== 快取配置 ====================
 const CACHE_KEY = 'regionCache'; // chrome.storage 中的鍵名
 const PROFILE_CACHE_KEY = 'profileCache'; // 用戶側寫快取的鍵名
@@ -479,6 +492,50 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
     // 開啟新分頁到用戶的 Threads 個人資料頁面
     const profileUrl = `https://www.threads.com/@${cleanUsername}?hl=en`;
 
+    // ==================== 檢查是否已存在相同 URL 的分頁 ====================
+    // 使用 chrome.tabs.query 查找匹配的分頁
+    try {
+      const existingTabs = await chrome.tabs.query({ url: `*://www.threads.com/@${cleanUsername}*` });
+      if (existingTabs && existingTabs.length > 0) {
+        console.log(`[QueryManager] 發現已存在 @${cleanUsername} 的分頁 (${existingTabs.length} 個)，跳過創建新分頁`);
+
+        // 使用已存在的分頁進行查詢
+        const existingTab = existingTabs[0];
+
+        // 刷新該分頁以確保內容是最新的
+        await chrome.tabs.reload(existingTab.id);
+
+        // 等待分頁載入完成
+        await new Promise((resolve) => {
+          const listener = (tabId, changeInfo) => {
+            if (tabId === existingTab.id && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+          setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }, 10000);
+        });
+
+        // 設定 newTab 為已存在的分頁
+        newTab = existingTab;
+        console.log(`[QueryManager] 使用已存在的分頁 ID ${newTab.id}`);
+
+        // 跳過後續的分頁創建邏輯，直接進入查詢階段
+        // （通過設置一個標記來跳過）
+      }
+    } catch (queryError) {
+      console.log(`[QueryManager] 查詢現有分頁時發生錯誤: ${queryError.message}`);
+      // 繼續正常流程，創建新分頁
+    }
+    // ==================== 結束：檢查現有分頁 ====================
+
+    // 只在沒有找到現有分頁時才創建新分頁
+    if (!newTab) {
+
     // 尋找有開啟 threads.com 的視窗
     let targetWindowId = null;
     try {
@@ -529,6 +586,8 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
         resolve();
       }, 10000);
     });
+
+    } // 結束 if (!newTab) 區塊
 
     // 等待頁面完全渲染和 content script 載入
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1099,6 +1158,7 @@ async function processQueryQueue() {
   } finally {
     activeQueryCount--;
     console.log(`[QueryManager] 任務完成 @${task.username} (進行中: ${activeQueryCount}/${queueJobMax}, 隊列剩餘: ${queryQueue.length})`);
+    sendQueueUpdate(`完成查詢: @${task.username}`, 'success');
 
     // 任務完成後，繼續處理隊列中的下一個任務
     processQueryQueue();
@@ -1149,6 +1209,11 @@ async function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = 
     return null;
   }
 
+  // ★ 立即標記為正在查詢中和記錄查詢時間，防止並發競爭條件
+  pendingQueries.add(cleanUsername);
+  recentlyQueriedUrls.set(cleanUsername, Date.now());
+  console.log(`[QueryManager] @${cleanUsername} 已標記為正在查詢中`);
+
   return new Promise((resolve, reject) => {
     queryQueue.push({
       username: cleanUsername,
@@ -1160,6 +1225,7 @@ async function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = 
     });
 
     console.log(`[QueryManager] 任務已加入隊列 @${cleanUsername} (隊列長度: ${queryQueue.length}/${queryQueueMax})`);
+    sendQueueUpdate(`加入隊列: @${cleanUsername}`, 'pending');
 
     // 嘗試立即開始處理隊列
     processQueryQueue();
@@ -1211,6 +1277,11 @@ async function addToIntegratedQueryQueue(username, enableProfileAnalysis = false
     console.log(`[QueryManager] @${cleanUsername} 已在隊列中，跳過重複加入`);
     return null;
   }
+
+  // ★ 立即標記為正在查詢中和記錄查詢時間，防止並發競爭條件
+  pendingQueries.add(cleanUsername);
+  recentlyQueriedUrls.set(cleanUsername, Date.now());
+  console.log(`[QueryManager] @${cleanUsername} 已標記為正在查詢中`);
 
   return new Promise((resolve, reject) => {
     queryQueue.push({

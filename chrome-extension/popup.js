@@ -27,6 +27,9 @@ var contentOutput = document.getElementById('contentOutput');
 var outputSection = document.getElementById('outputSection');
 var queryMethodToggle = document.getElementById('queryMethodToggle');
 var queryMethodDescription = document.getElementById('queryMethodDescription');
+var queueLengthEl = document.getElementById('queueLength');
+var activeCountEl = document.getElementById('activeCount');
+var queueLogEl = document.getElementById('queueLog');
 
 // 全局變數
 var currentGetUserListArray = [];
@@ -106,6 +109,65 @@ chrome.storage.onChanged.addListener(function(changes, areaName) {
     }
   }
 });
+
+// ==================== 隊列狀態更新 ====================
+
+// 監聽來自 background 的隊列狀態更新
+chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+  if (request.action === 'queueUpdate') {
+    updateQueueDisplay(request.queueLength, request.activeCount, request.message, request.type);
+    sendResponse({ success: true });
+  }
+  return false;
+});
+
+// 更新隊列顯示
+function updateQueueDisplay(queueLength, activeCount, message, type) {
+  // 更新數字
+  if (queueLengthEl) queueLengthEl.textContent = queueLength || 0;
+  if (activeCountEl) activeCountEl.textContent = activeCount || 0;
+
+  // 添加日誌訊息
+  if (message && queueLogEl) {
+    addQueueLogItem(message, type);
+  }
+}
+
+// 添加隊列日誌項目
+function addQueueLogItem(message, type) {
+  var item = document.createElement('div');
+  item.className = 'queue-log-item';
+  if (type) item.classList.add(type);
+
+  var time = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  item.textContent = '[' + time + '] ' + message;
+
+  // 移除「等待查詢任務...」的初始訊息
+  var firstItem = queueLogEl.querySelector('.queue-log-item');
+  if (firstItem && firstItem.textContent === '等待查詢任務...') {
+    firstItem.remove();
+  }
+
+  // 添加到頂部
+  queueLogEl.insertBefore(item, queueLogEl.firstChild);
+
+  // 限制最多顯示 20 條日誌
+  while (queueLogEl.children.length > 20) {
+    queueLogEl.removeChild(queueLogEl.lastChild);
+  }
+}
+
+// 初始化時請求隊列狀態
+function requestQueueStatus() {
+  chrome.runtime.sendMessage({ action: 'getQueueStatus' }, function(response) {
+    if (response && response.success) {
+      updateQueueDisplay(response.queueLength, response.activeCount, null, null);
+    }
+  });
+}
+
+// 頁面載入時請求隊列狀態
+requestQueueStatus();
 
 // ==================== 設定載入與儲存 ====================
 

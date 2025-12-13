@@ -486,3 +486,60 @@ input[type="number"] {
   color: var(--bg-primary);
   box-shadow: 0 2px 8px rgba(255, 215, 0, 0.3);
 }
+
+/* ==================== 隊列狀態樣式 ==================== */
+.queue-section {
+  margin-bottom: var(--space-sm);
+}
+
+.queue-stats {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.queue-stat {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.queue-stat span {
+  color: var(--brand-primary);
+  font-weight: 600;
+}
+
+.queue-log {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 11px;
+}
+
+.queue-log-item {
+  color: var(--text-muted);
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.queue-log-item:last-child {
+  border-bottom: none;
+}
+
+.queue-log-item.success {
+  color: var(--status-success);
+}
+
+.queue-log-item.error {
+  color: var(--status-error);
+}
+
+.queue-log-item.pending {
+  color: var(--brand-primary);
+}
