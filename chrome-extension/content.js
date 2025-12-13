@@ -960,12 +960,15 @@ async function autoClickAboutProfileAndGetRegion() {
       }
     }
 
-    console.log('[Threads] 重試完畢仍找不到地區資訊');
-    return null;
+    // 重試完畢仍找不到地區資訊，表示該用戶沒有設定「Based in」欄位
+    // 這種情況視為「未揭露」
+    console.log('[Threads] 重試完畢仍找不到地區資訊，用戶未設定位置，視為「未揭露」');
+    return '未揭露';
 
   } catch (error) {
     console.log('[Threads] autoClickAboutProfileAndGetRegion 錯誤:', error);
-    return null;
+    // 發生錯誤時也視為「未揭露」
+    return '未揭露';
   }
 }
 

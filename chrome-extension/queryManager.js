@@ -10,6 +10,8 @@ const queryQueueMax = 30; // 隊列最大長度
 let queryQueue = []; // 待處理的查詢隊列
 let activeQueryCount = 0; // 當前正在執行的查詢數量
 const pendingQueries = new Set(); // 正在查詢中的用戶名（防止同一用戶開多個分頁）
+const recentlyQueriedUrls = new Map(); // URL 冷卻追蹤 { username: timestamp }
+const URL_COOLDOWN_MS = 60000; // URL 冷卻時間（60 秒）
 
 // ==================== 快取配置 ====================
 const CACHE_KEY = 'regionCache'; // chrome.storage 中的鍵名
@@ -394,6 +396,8 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   try {
     // 標記此用戶正在查詢中
     pendingQueries.add(cleanUsername);
+    // 記錄查詢時間（用於 URL 冷卻追蹤）
+    recentlyQueriedUrls.set(cleanUsername, Date.now());
     console.log(`[QueryManager] 正在查詢 @${cleanUsername}...`);
 
     // ==================== 根據設定選擇查詢方式 ====================
@@ -561,7 +565,8 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
 
     // 返回結果
     if (response && response.success) {
-      const region = response.region;
+      // 如果 region 為 null 或空，視為「未揭露」
+      const region = response.region || '未揭露';
 
       // 根據設定決定是否關閉新分頁
       // 如果 shouldKeepTab 為 true，且有過濾條件，則只有當結果不包含過濾條件時才保留
@@ -1118,6 +1123,13 @@ async function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = 
     return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
   }
 
+  // 檢查 URL 冷卻時間（防止短時間內重複開啟同一用戶頁面）
+  const lastQueryTime = recentlyQueriedUrls.get(cleanUsername);
+  if (lastQueryTime && (Date.now() - lastQueryTime) < URL_COOLDOWN_MS) {
+    console.log(`[QueryManager] @${cleanUsername} 仍在冷卻期（${Math.ceil((URL_COOLDOWN_MS - (Date.now() - lastQueryTime)) / 1000)}秒後可再查詢）`);
+    return null;
+  }
+
   // 檢查是否正在查詢中（防止同一用戶開多個分頁）
   if (pendingQueries.has(cleanUsername)) {
     console.log(`[QueryManager] @${cleanUsername} 正在查詢中，跳過重複加入`);
@@ -1172,6 +1184,13 @@ async function addToIntegratedQueryQueue(username, enableProfileAnalysis = false
   if (cachedRegion !== null) {
     console.log(`[QueryManager] @${cleanUsername} 已有快取資料，跳過加入隊列`);
     return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
+  }
+
+  // 檢查 URL 冷卻時間（防止短時間內重複開啟同一用戶頁面）
+  const lastQueryTime = recentlyQueriedUrls.get(cleanUsername);
+  if (lastQueryTime && (Date.now() - lastQueryTime) < URL_COOLDOWN_MS) {
+    console.log(`[QueryManager] @${cleanUsername} 仍在冷卻期（${Math.ceil((URL_COOLDOWN_MS - (Date.now() - lastQueryTime)) / 1000)}秒後可再查詢）`);
+    return null;
   }
 
   // 檢查是否正在查詢中（防止同一用戶開多個分頁）
