@@ -381,6 +381,13 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   // 移除 @ 符號（如果有的話）
   const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
 
+  // 先檢查快取，避免重複查詢
+  const cachedRegion = await getCachedRegion(cleanUsername);
+  if (cachedRegion !== null) {
+    console.log(`[QueryManager] @${cleanUsername} 已有快取資料: ${cachedRegion}，跳過查詢`);
+    return { success: true, region: cachedRegion, fromCache: true };
+  }
+
   let newTab = null;
 
   try {
@@ -388,12 +395,18 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
 
     // ==================== 根據設定選擇查詢方式 ====================
     // 從 storage 讀取查詢方式設定
-    let queryMethod = 'api'; // 預設使用 API 攔截
+    let queryMethod = 'off'; // 預設關閉自動查詢
     try {
       const storageResult = await chrome.storage.local.get(['queryMethod']);
-      queryMethod = storageResult.queryMethod || 'api';
+      queryMethod = storageResult.queryMethod || 'off';
     } catch (e) {
-      console.log('[QueryManager] 讀取查詢方式設定失敗，使用預設值 api');
+      console.log('[QueryManager] 讀取查詢方式設定失敗，使用預設值 off');
+    }
+
+    // 如果查詢方式為關閉，跳過查詢
+    if (queryMethod === 'off') {
+      console.log(`[QueryManager] 查詢方式已關閉，跳過 @${cleanUsername}`);
+      return { success: false, error: '查詢方式已關閉' };
     }
 
     // 如果使用者選擇 API 攔截方式
@@ -604,6 +617,11 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
           console.error('[QueryManager] 關閉分頁時發生錯誤:', closeError);
         }
       }
+
+      // 保存到快取，避免重複查詢（使用「查無資料」標記）
+      await saveCachedRegion(cleanUsername, '查無資料');
+      console.log(`[QueryManager] 已將 @${cleanUsername} 標記為「查無資料」，避免重複查詢`);
+
       return {
         success: false,
         error: (response && response.error) || '未知錯誤'
@@ -1077,9 +1095,16 @@ async function processQueryQueue() {
  * @param {string} keepTabFilter - 保留分頁的過濾條件
  * @returns {Promise<{success: boolean, region?: string, error?: string}>|null} 返回 null 表示無法加入隊列
  */
-function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
+async function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
   // 移除 @ 符號（如果有的話）
   const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+
+  // 先檢查快取，如果已有資料則跳過
+  const cachedRegion = await getCachedRegion(cleanUsername);
+  if (cachedRegion !== null) {
+    console.log(`[QueryManager] @${cleanUsername} 已有快取資料，跳過加入隊列`);
+    return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
+  }
 
   // 檢查隊列是否已滿
   if (queryQueue.length >= queryQueueMax) {
@@ -1120,9 +1145,16 @@ function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = '') {
  * @param {function} onProfileContentReady - 當側寫內容準備好時的回調
  * @returns {Promise<{success: boolean, region?: string, error?: string}>|null} 返回 null 表示無法加入隊列
  */
-function addToIntegratedQueryQueue(username, enableProfileAnalysis = false, shouldKeepTab = false, keepTabFilter = '', onProfileContentReady = null) {
+async function addToIntegratedQueryQueue(username, enableProfileAnalysis = false, shouldKeepTab = false, keepTabFilter = '', onProfileContentReady = null) {
   // 移除 @ 符號（如果有的話）
   const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+
+  // 先檢查快取，如果已有資料則跳過
+  const cachedRegion = await getCachedRegion(cleanUsername);
+  if (cachedRegion !== null) {
+    console.log(`[QueryManager] @${cleanUsername} 已有快取資料，跳過加入隊列`);
+    return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
+  }
 
   // 檢查隊列是否已滿
   if (queryQueue.length >= queryQueueMax) {

@@ -93,6 +93,20 @@ function updateProfileCacheStats() {
   });
 }
 
+// 監聽 storage 變化，即時更新快取統計
+chrome.storage.onChanged.addListener(function(changes, areaName) {
+  if (areaName === 'local') {
+    // 如果 regionCache 有變化，更新地區快取統計
+    if (changes.regionCache) {
+      updateCacheStats();
+    }
+    // 如果 profileCache 有變化，更新側寫快取統計
+    if (changes.profileCache) {
+      updateProfileCacheStats();
+    }
+  }
+});
+
 // ==================== 設定載入與儲存 ====================
 
 async function loadSettings() {
@@ -107,8 +121,8 @@ async function loadSettings() {
       'queryMethod'
     ]);
 
-    // 查詢方式設定
-    updateQueryMethodToggle(result.queryMethod || 'api');
+    // 查詢方式設定（預設關閉）
+    updateQueryMethodToggle(result.queryMethod || 'off');
 
     // 保留分頁設定
     keepTabCheckbox.checked = result.keepTabAfterQuery || false;
@@ -622,7 +636,9 @@ function updateQueryMethodToggle(method) {
 
   // 更新描述文字
   if (queryMethodDescription) {
-    if (method === 'api') {
+    if (method === 'off') {
+      queryMethodDescription.textContent = '手動點擊標籤上的查詢按鈕';
+    } else if (method === 'api') {
       queryMethodDescription.textContent = 'API 較快（<1秒），需先瀏覽動態';
     } else {
       queryMethodDescription.textContent = '開分頁較穩定（3-5秒），自動開啟查詢頁';

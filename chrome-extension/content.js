@@ -54,6 +54,19 @@ let apiInterceptorReady = false;
 let pendingApiRequests = new Map();
 
 /**
+ * 檢查 Extension context 是否仍然有效
+ * 當 extension 被重新載入時，舊的 content script 會失去連接
+ */
+function isExtensionContextValid() {
+  try {
+    // 嘗試存取 chrome.runtime.id，如果 context 失效會拋出錯誤
+    return !!(chrome.runtime && chrome.runtime.id);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * 注入 API 攔截腳本到頁面的 main world
  */
 function injectApiInterceptor() {
@@ -100,12 +113,16 @@ async function loadUserIdCacheToInjected() {
  * 儲存新發現的 user IDs 到快取
  */
 async function saveUserIdCache(newUserIds) {
+  if (!isExtensionContextValid()) return;
   try {
     userIdCache = { ...userIdCache, ...newUserIds };
     await chrome.storage.local.set({ userIdCache });
     console.log(`[小黃標] 已儲存 ${Object.keys(newUserIds).length} 個新 user IDs`);
   } catch (e) {
-    console.error('[小黃標] 儲存 user ID 快取失敗:', e);
+    // 忽略 extension context invalidated 錯誤
+    if (!e.message?.includes('Extension context invalidated')) {
+      console.error('[小黃標] 儲存 user ID 快取失敗:', e);
+    }
   }
 }
 
@@ -1361,6 +1378,49 @@ function showRegionLabelsOnPage(regionData) {
   let addedCount = 0;
   const totalCount = currentUserElementsData.length;
 
+  // 檢查查詢方式是否已關閉，如果關閉則不顯示標籤
+  chrome.storage.local.get(['queryMethod'], (result) => {
+    const queryMethod = result.queryMethod || 'off';
+    if (queryMethod === 'off') {
+      // 移除現有標籤
+      document.querySelectorAll('.threads-region-label').forEach(label => label.remove());
+      console.log('[Threads] 查詢方式已關閉，不顯示標籤');
+      return;
+    }
+
+    // 如果不是關閉狀態，繼續顯示標籤
+    showRegionLabelsOnPageInternal(regionData);
+  });
+
+  return { addedCount: 0, totalCount };
+}
+
+/**
+ * 內部函數：實際執行標籤顯示的邏輯
+ */
+async function showRegionLabelsOnPageInternal(regionData) {
+  let addedCount = 0;
+  const totalCount = currentUserElementsData.length;
+
+  // 從快取取得已查詢的地區資料，避免標籤狀態重置
+  let cachedRegions = {};
+  try {
+    const result = await chrome.storage.local.get(['regionCache']);
+    const cache = result.regionCache || {};
+    // 將快取資料轉換為 regionData 格式
+    Object.keys(cache).forEach(username => {
+      const cleanAccount = '@' + username;
+      if (!regionData[cleanAccount]) {
+        cachedRegions[cleanAccount] = { region: cache[username].region };
+      }
+    });
+  } catch (e) {
+    console.log('[Threads] 讀取快取失敗:', e);
+  }
+
+  // 合併傳入的 regionData 和快取資料（傳入的優先）
+  const mergedRegionData = { ...cachedRegions, ...regionData };
+
   console.log(`[Threads] 開始在頁面上添加用戶資訊標籤，共 ${totalCount} 個用戶`);
 
   currentUserElementsData.forEach((userData, index) => {
@@ -1376,7 +1436,7 @@ function showRegionLabelsOnPage(regionData) {
       // 解析 regionData，支援新舊格式
       let region = null;
       let profile = null;
-      const accountData = regionData[account];
+      const accountData = mergedRegionData[account];
 
       if (accountData) {
         if (typeof accountData === 'object' && accountData !== null) {
@@ -1766,13 +1826,13 @@ function addQueryButton(labelElement, account, index, labelTextSpan) {
       addRefreshButton(labelElement, accountToQuery, labelTextSpan);
 
       // 將查詢結果同步到 sidepanel 的 currentGetUserListArray
-      chrome.runtime.sendMessage({
-        action: 'updateUserRegion',
-        account: accountToQuery,
-        region: '未揭露'
-      }).catch(err => {
-        console.log('[Threads] 同步查詢結果到 sidepanel 失敗:', err.message);
-      });
+      if (isExtensionContextValid()) {
+        chrome.runtime.sendMessage({
+          action: 'updateUserRegion',
+          account: accountToQuery,
+          region: '未揭露'
+        }).catch(() => {});
+      }
     }
   }, true); // 使用捕獲階段，確保在父層連結處理之前執行
 
@@ -2220,17 +2280,18 @@ function handlePageScroll(skipThrottle = false) {
 
   console.log('[Threads] 頁面捲動，通知 sidepanel 更新用戶列表');
 
-  // 發送消息到 sidepanel
-  chrome.runtime.sendMessage({
-    action: 'pageScrolled'
-  }).then(response => {
-    if (response && response.success) {
-      console.log('[Threads] Sidepanel 已收到捲動通知');
-    }
-  }).catch(error => {
-    // 忽略錯誤（可能 sidepanel 未開啟）
-    console.log('[Threads] 發送捲動通知失敗（sidepanel 可能未開啟）:', error.message);
-  });
+  // 發送消息到 sidepanel（只在 context 有效時）
+  if (isExtensionContextValid()) {
+    chrome.runtime.sendMessage({
+      action: 'pageScrolled'
+    }).then(response => {
+      if (response && response.success) {
+        console.log('[Threads] Sidepanel 已收到捲動通知');
+      }
+    }).catch(error => {
+      // 忽略 extension context invalidated 錯誤
+    });
+  }
 
   // 清除之前的滾動停止計時器
   if (scrollStopTimer) {
