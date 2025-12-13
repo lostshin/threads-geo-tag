@@ -9,6 +9,7 @@ let queueJobMax = 3; // 最多同時處理的任務數（可動態更新）
 const queryQueueMax = 30; // 隊列最大長度
 let queryQueue = []; // 待處理的查詢隊列
 let activeQueryCount = 0; // 當前正在執行的查詢數量
+const pendingQueries = new Set(); // 正在查詢中的用戶名（防止同一用戶開多個分頁）
 
 // ==================== 快取配置 ====================
 const CACHE_KEY = 'regionCache'; // chrome.storage 中的鍵名
@@ -391,6 +392,8 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
   let newTab = null;
 
   try {
+    // 標記此用戶正在查詢中
+    pendingQueries.add(cleanUsername);
     console.log(`[QueryManager] 正在查詢 @${cleanUsername}...`);
 
     // ==================== 根據設定選擇查詢方式 ====================
@@ -618,13 +621,14 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
         }
       }
 
-      // 保存到快取，避免重複查詢（使用「查無資料」標記）
-      await saveCachedRegion(cleanUsername, '查無資料');
-      console.log(`[QueryManager] 已將 @${cleanUsername} 標記為「查無資料」，避免重複查詢`);
+      // 查詢失敗也要保存到快取，避免重複查詢
+      await saveCachedRegion(cleanUsername, '未揭露');
+      console.log(`[QueryManager] @${cleanUsername} 未揭露，已保存到快取`);
 
       return {
-        success: false,
-        error: (response && response.error) || '未知錯誤'
+        success: true,
+        region: '未揭露',
+        fromCache: false
       };
     }
   } catch (error) {
@@ -645,11 +649,19 @@ async function executeQuery(username, shouldKeepTab = false, keepTabFilter = '')
       }
     }
 
+    // 查詢錯誤也保存「未揭露」到快取，避免重複嘗試
+    await saveCachedRegion(cleanUsername, '未揭露');
+    console.log(`[QueryManager] @${cleanUsername} 查詢錯誤，標記為未揭露`);
+
     console.error(`[QueryManager] 查詢失敗 @${cleanUsername}:`, error.message);
     return {
-      success: false,
-      error: error.message
+      success: true,
+      region: '未揭露',
+      fromCache: false
     };
+  } finally {
+    // 無論成功或失敗，都要從正在查詢的清單中移除
+    pendingQueries.delete(cleanUsername);
   }
 }
 
@@ -1106,6 +1118,12 @@ async function addToQueryQueue(username, shouldKeepTab = false, keepTabFilter = 
     return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
   }
 
+  // 檢查是否正在查詢中（防止同一用戶開多個分頁）
+  if (pendingQueries.has(cleanUsername)) {
+    console.log(`[QueryManager] @${cleanUsername} 正在查詢中，跳過重複加入`);
+    return null;
+  }
+
   // 檢查隊列是否已滿
   if (queryQueue.length >= queryQueueMax) {
     console.log(`[QueryManager] 隊列已滿 (${queryQueue.length}/${queryQueueMax})，拒絕加入 @${cleanUsername}`);
@@ -1154,6 +1172,12 @@ async function addToIntegratedQueryQueue(username, enableProfileAnalysis = false
   if (cachedRegion !== null) {
     console.log(`[QueryManager] @${cleanUsername} 已有快取資料，跳過加入隊列`);
     return Promise.resolve({ success: true, region: cachedRegion, fromCache: true });
+  }
+
+  // 檢查是否正在查詢中（防止同一用戶開多個分頁）
+  if (pendingQueries.has(cleanUsername)) {
+    console.log(`[QueryManager] @${cleanUsername} 正在查詢中，跳過重複加入`);
+    return null;
   }
 
   // 檢查隊列是否已滿
