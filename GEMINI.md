@@ -61,8 +61,9 @@ activation: always
 - `queryManager.js` - 隊列、快取、並發控制
 - `injected.js` - API 攔截
 - `dateUtils.js` - 日期解析與新用戶判斷
+- `regionMap.js` - 地區名稱正規化對照表
 - `popup.html/js/css` - Popup UI（含隊列狀態）
-- `sidepanel.*` - Side Panel UI
+- `sidepanel.*` - Side Panel UI ⚠️ **非必要不修改**（與 Dia 瀏覽器不相容）
 
 ## 測試方式
 

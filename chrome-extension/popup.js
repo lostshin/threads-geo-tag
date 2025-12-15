@@ -419,15 +419,46 @@ async function showRegionLabels() {
     }
 
     var regionData = {};
-    currentGetUserListArray.forEach(function(user) {
-      if (user.region) {
+
+    // 使用 for...of 來支援 async/await
+    for (var i = 0; i < currentGetUserListArray.length; i++) {
+      var user = currentGetUserListArray[i];
+      var region = user.region || null;
+      var profile = user.profile || null;
+      var joined = user.joined || null;
+
+      // 如果用戶沒有 region/joined，嘗試從快取獲取
+      if (!region || !joined) {
+        var username = user.account.replace(/^@/, '');
+        try {
+          var response = await chrome.runtime.sendMessage({
+            action: 'getCachedUserInfo',
+            username: username
+          });
+          if (response && response.success) {
+            if (response.region && !region) {
+              region = response.region;
+              user.region = response.region;
+            }
+            if (response.joined && !joined) {
+              joined = response.joined;
+              user.joined = response.joined;
+            }
+          }
+        } catch (err) {
+          console.log('[Popup] 讀取用戶快取失敗 ' + username + ':', err.message);
+        }
+      }
+
+      // 只有有地區資訊的用戶才加入 regionData
+      if (region) {
         regionData[user.account] = {
-          region: user.region,
-          profile: user.profile || null,
-          joined: user.joined || null
+          region: region,
+          profile: profile,
+          joined: joined
         };
       }
-    });
+    }
 
     var response = await chrome.tabs.sendMessage(tabs[0].id, {
       action: 'showRegionLabels',
